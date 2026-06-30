@@ -1609,7 +1609,7 @@ async function uploadScreenshotToDrive(token, folderId, dataURL, tradeId) {
   form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
   form.append('file', blob);
 
-  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form
@@ -1621,7 +1621,7 @@ async function uploadScreenshotToDrive(token, folderId, dataURL, tradeId) {
   if(!uploadData.id) throw new Error('画像アップロード失敗: ' + JSON.stringify(uploadData));
 
   // リンクを知っていれば誰でも閲覧できるよう権限を付与（サービスアカウント越しの自分専用フォルダなので安全）
-  const permRes = await fetch(`https://www.googleapis.com/drive/v3/files/${uploadData.id}/permissions`, {
+  const permRes = await fetch(`https://www.googleapis.com/drive/v3/files/${uploadData.id}/permissions?supportsAllDrives=true`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ role: 'reader', type: 'anyone' })
