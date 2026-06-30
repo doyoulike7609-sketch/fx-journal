@@ -469,7 +469,9 @@ const STORAGE_KEY = 'fx-journal-v3';
 const GS_KEY = 'fx-gs-v1';
 const SHEET_ID = '12_LbV80ujP7wWBdmClxysYyjCE2UTwSjViwDww0vy9Q';
 const SHEET_NAME = 'トレード履歴';
-const DRIVE_FOLDER_KEY = 'fx-gs-drive-folder-v1'; // Google DriveのスクリーンショットフォルダIDをlocalStorageに保持
+// サービスアカウント自体にはストレージ容量がないため、ユーザー個人のDriveフォルダを共有してもらい、
+// そのフォルダIDに固定でアップロードする（サービスアカウントは「編集者」として招待されている前提）。
+const DRIVE_FOLDER_ID = '1s-HkcecxcmoXR7MHcGlKTrulrM_h3XqF';
 // 時間帯自動判定（JST基準）
 function detectSession(dateTimeStr) {
   const m = (dateTimeStr||'').match(/(\d{1,2}):(\d{2})/);
@@ -1582,40 +1584,10 @@ async function getToken(email, pk) {
 
 // ===== Google Drive：スクリーンショット保存 =====
 
-// 専用フォルダを取得（なければ作成）。一度作ったフォルダIDはlocalStorageにキャッシュする。
+// ユーザーが共有してくれた固定フォルダをそのまま使う（サービスアカウントには保存容量がないため、
+// 自分でフォルダを作成することができない。ユーザー個人のフォルダを間借りする方式）。
 async function ensureDriveFolder(token) {
-  const cached = localStorage.getItem(DRIVE_FOLDER_KEY);
-  if(cached) return cached;
-
-  // 既存フォルダを検索（同名フォルダの重複作成を防ぐ）
-  const q = encodeURIComponent("name='FXJournal_Screenshots' and mimeType='application/vnd.google-apps.folder' and trashed=false");
-  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  const searchText = await searchRes.text();
-  if(!searchRes.ok) throw new Error(`Drive検索エラー(HTTP ${searchRes.status}): ${searchText.slice(0,200)}`);
-  let searchData;
-  try { searchData = JSON.parse(searchText); } catch { throw new Error('Drive検索レスポンスの解析に失敗: '+searchText.slice(0,200)); }
-
-  if(searchData.files && searchData.files.length > 0) {
-    const id = searchData.files[0].id;
-    localStorage.setItem(DRIVE_FOLDER_KEY, id);
-    return id;
-  }
-
-  // 見つからなければ新規作成
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'FXJournal_Screenshots', mimeType: 'application/vnd.google-apps.folder' })
-  });
-  const createText = await createRes.text();
-  if(!createRes.ok) throw new Error(`Driveフォルダ作成エラー(HTTP ${createRes.status}): ${createText.slice(0,200)}`);
-  let createData;
-  try { createData = JSON.parse(createText); } catch { throw new Error('Driveフォルダ作成レスポンスの解析に失敗: '+createText.slice(0,200)); }
-  if(!createData.id) throw new Error('Driveフォルダの作成に失敗: ' + JSON.stringify(createData));
-  localStorage.setItem(DRIVE_FOLDER_KEY, createData.id);
-  return createData.id;
+  return DRIVE_FOLDER_ID;
 }
 
 // Base64の dataURL を Blob に変換
