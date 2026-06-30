@@ -437,13 +437,13 @@
 <div class="modal-overlay" id="gs-modal" onclick="if(event.target===this)closeGsModal()">
   <div class="modal" style="border-radius:12px;max-width:500px;margin:auto">
     <div class="modal-header">
-      <div style="font-size:15px;font-weight:700">☁️ Google Sheets / Drive 連携設定</div>
+      <div style="font-size:15px;font-weight:700">☁️ Google Sheets連携設定</div>
       <button class="modal-close" onclick="closeGsModal()">✕</button>
     </div>
     <div style="font-size:12px;color:var(--sub);margin-bottom:14px;line-height:1.6">
       サービスアカウントのJSONファイルから<br>
       <strong style="color:var(--text)">client_email</strong> と <strong style="color:var(--text)">private_key</strong> を貼り付けてください。<br>
-      <span style="color:var(--blue2)">📸 スクリーンショットは自動でGoogle Driveに保存され、デバイスをまたいで表示されます。</span>
+      <span style="color:var(--blue2)">📸 スクリーンショットは自動でクラウドに保存され、デバイスをまたいで表示されます。</span>
     </div>
     <div id="gs-current" style="display:none;margin-bottom:12px;padding:8px 12px;background:#3FB95011;border:1px solid #3FB95033;border-radius:6px;font-size:12px;color:var(--green)"></div>
     <div style="margin-bottom:10px">
@@ -469,9 +469,9 @@ const STORAGE_KEY = 'fx-journal-v3';
 const GS_KEY = 'fx-gs-v1';
 const SHEET_ID = '12_LbV80ujP7wWBdmClxysYyjCE2UTwSjViwDww0vy9Q';
 const SHEET_NAME = 'トレード履歴';
-// サービスアカウント自体にはストレージ容量がないため、ユーザー個人のDriveフォルダを共有してもらい、
-// そのフォルダIDに固定でアップロードする（サービスアカウントは「編集者」として招待されている前提）。
-const DRIVE_FOLDER_ID = '1s-HkcecxcmoXR7MHcGlKTrulrM_h3XqF';
+// スクリーンショットはImgBB（無料の画像ホスティングAPI）に保存し、URLだけをスプレッドシートに残す。
+// Google Driveはサービスアカウントの保存容量制限（storage quota）により断念し、よりシンプルなこちらに切り替えた。
+const IMGBB_API_KEY = '4fec620330d609b8154108cb9001e359';
 // 時間帯自動判定（JST基準）
 function detectSession(dateTimeStr) {
   const m = (dateTimeStr||'').match(/(\d{1,2}):(\d{2})/);
@@ -1563,8 +1563,8 @@ function renderWeakness() {
 async function createJWT(email, privateKey) {
   const header=btoa(JSON.stringify({alg:'RS256',typ:'JWT'})).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
   const now=Math.floor(Date.now()/1000);
-  // スプレッドシートとDriveの両方にアクセスできるようスコープを拡張（スクリーンショット保存に必要）
-  const scope='https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive';
+  // スプレッドシート同期のみに必要なスコープ（画像はImgBBに保存するため、Driveスコープは不要）
+  const scope='https://www.googleapis.com/auth/spreadsheets';
   const claim=btoa(JSON.stringify({iss:email,scope,aud:'https://oauth2.googleapis.com/token',exp:now+3600,iat:now})).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
   const pem=privateKey.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
   const der=Uint8Array.from(atob(pem),c=>c.charCodeAt(0));
@@ -1582,13 +1582,7 @@ async function getToken(email, pk) {
   return d.access_token;
 }
 
-// ===== Google Drive：スクリーンショット保存 =====
-
-// ユーザーが共有してくれた固定フォルダをそのまま使う（サービスアカウントには保存容量がないため、
-// 自分でフォルダを作成することができない。ユーザー個人のフォルダを間借りする方式）。
-async function ensureDriveFolder(token) {
-  return DRIVE_FOLDER_ID;
-}
+// ===== ImgBB：スクリーンショット保存 =====
 
 // Base64の dataURL を Blob に変換
 function dataURLToBlob(dataURL) {
@@ -1600,52 +1594,41 @@ function dataURLToBlob(dataURL) {
   return new Blob([bytes], { type: mime });
 }
 
-// 画像をDriveにアップロードし、誰でも閲覧できるURLを返す
-async function uploadScreenshotToDrive(token, folderId, dataURL, tradeId) {
+// 画像をImgBBにアップロードし、永続的に閲覧できるURLを返す
+// ImgBBはGoogleの認証トークンを必要とせず、APIキーだけで完結するシンプルな仕組み
+async function uploadScreenshotToImgBB(dataURL, tradeId) {
   const blob = dataURLToBlob(dataURL);
-  const metadata = { name: `trade_${tradeId}.jpg`, parents: [folderId] };
 
   const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-  form.append('file', blob);
+  form.append('key', IMGBB_API_KEY);
+  form.append('image', blob, `trade_${tradeId}.jpg`);
 
-  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true', {
+  const uploadRes = await fetch('https://api.imgbb.com/1/upload', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
     body: form
   });
   const uploadText = await uploadRes.text();
-  if(!uploadRes.ok) throw new Error(`Driveアップロードエラー(HTTP ${uploadRes.status}): ${uploadText.slice(0,200)}`);
+  if(!uploadRes.ok) throw new Error(`ImgBBアップロードエラー(HTTP ${uploadRes.status}): ${uploadText.slice(0,200)}`);
   let uploadData;
-  try { uploadData = JSON.parse(uploadText); } catch { throw new Error('Driveアップロードレスポンスの解析に失敗: '+uploadText.slice(0,200)); }
-  if(!uploadData.id) throw new Error('画像アップロード失敗: ' + JSON.stringify(uploadData));
-
-  // リンクを知っていれば誰でも閲覧できるよう権限を付与（サービスアカウント越しの自分専用フォルダなので安全）
-  const permRes = await fetch(`https://www.googleapis.com/drive/v3/files/${uploadData.id}/permissions?supportsAllDrives=true`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'reader', type: 'anyone' })
-  });
-  if(!permRes.ok) {
-    const permText = await permRes.text();
-    console.error('権限付与に失敗（画像は保存済みだが閲覧制限がかかる可能性）:', permText.slice(0,200));
+  try { uploadData = JSON.parse(uploadText); } catch { throw new Error('ImgBBレスポンスの解析に失敗: '+uploadText.slice(0,200)); }
+  if(!uploadData.success || !uploadData.data || !uploadData.data.url) {
+    throw new Error('画像アップロード失敗: ' + JSON.stringify(uploadData).slice(0,200));
   }
 
-  return `https://drive.google.com/uc?export=view&id=${uploadData.id}`;
+  return uploadData.data.url;
 }
 
-// 既存トレードのうちローカルのBase64画像（ssPreview）しか持っていないものを、まとめてDriveにアップロードしてURLに置き換える
-async function migrateScreenshotsToDrive(token) {
+// 既存トレードのうちローカルのBase64画像（ssPreview）しか持っていないものを、まとめてImgBBにアップロードしてURLに置き換える
+async function migrateScreenshotsToImgBB() {
   const targets = trades.filter(t => t.ssPreview && t.ssPreview.startsWith('data:') && !t.ssDriveUrl);
   if(!targets.length) return { uploaded: 0, failed: 0, firstError: null };
-  const folderId = await ensureDriveFolder(token);
   let uploaded = 0;
   let failed = 0;
   let firstError = null;
   for(const t of targets) {
     try {
-      const url = await uploadScreenshotToDrive(token, folderId, t.ssPreview, t.id);
-      t.ssDriveUrl = url;
+      const url = await uploadScreenshotToImgBB(t.ssPreview, t.id);
+      t.ssDriveUrl = url; // フィールド名はssDriveUrlのまま流用（ImgBBのURLが入る）
       uploaded++;
     } catch(e) {
       failed++;
@@ -1662,10 +1645,10 @@ async function syncToGS(showAlert=true) {
   try {
     const token=await getToken(gsSettings.clientEmail, gsSettings.privateKey);
 
-    // 未アップロードのスクリーンショットをDriveに送る（既にURLがあるものはスキップ）
+    // 未アップロードのスクリーンショットをImgBBに送る（既にURLがあるものはスキップ）
     let uploadedCount = 0, failedCount = 0, uploadErrorMsg = null;
     try {
-      const result = await migrateScreenshotsToDrive(token);
+      const result = await migrateScreenshotsToImgBB();
       uploadedCount = result.uploaded;
       failedCount = result.failed;
       uploadErrorMsg = result.firstError;
@@ -1699,7 +1682,7 @@ async function syncToGS(showAlert=true) {
         m.textContent = `⚠️ シートは同期しましたが、画像アップロードに失敗しました: ${uploadErrorMsg||'不明なエラー'}`;
       } else {
         m.style.color='var(--green)';
-        m.textContent = uploadedCount>0 ? `✅ 同期しました！（画像${uploadedCount}枚をDriveに保存）` : '✅ 同期しました！';
+        m.textContent = uploadedCount>0 ? `✅ 同期しました！（画像${uploadedCount}枚をクラウドに保存）` : '✅ 同期しました！';
       }
     }
     setTimeout(()=>updateGsBadge('idle'),3000);
