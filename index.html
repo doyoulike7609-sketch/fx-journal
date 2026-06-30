@@ -422,12 +422,13 @@
 <div class="modal-overlay" id="gs-modal" onclick="if(event.target===this)closeGsModal()">
   <div class="modal" style="border-radius:12px;max-width:500px;margin:auto">
     <div class="modal-header">
-      <div style="font-size:15px;font-weight:700">☁️ Google Sheets連携設定</div>
+      <div style="font-size:15px;font-weight:700">☁️ Google Sheets / Drive 連携設定</div>
       <button class="modal-close" onclick="closeGsModal()">✕</button>
     </div>
     <div style="font-size:12px;color:var(--sub);margin-bottom:14px;line-height:1.6">
       サービスアカウントのJSONファイルから<br>
-      <strong style="color:var(--text)">client_email</strong> と <strong style="color:var(--text)">private_key</strong> を貼り付けてください。
+      <strong style="color:var(--text)">client_email</strong> と <strong style="color:var(--text)">private_key</strong> を貼り付けてください。<br>
+      <span style="color:var(--blue2)">📸 スクリーンショットは自動でGoogle Driveに保存され、デバイスをまたいで表示されます。</span>
     </div>
     <div id="gs-current" style="display:none;margin-bottom:12px;padding:8px 12px;background:#3FB95011;border:1px solid #3FB95033;border-radius:6px;font-size:12px;color:var(--green)"></div>
     <div style="margin-bottom:10px">
@@ -453,6 +454,7 @@ const STORAGE_KEY = 'fx-journal-v3';
 const GS_KEY = 'fx-gs-v1';
 const SHEET_ID = '12_LbV80ujP7wWBdmClxysYyjCE2UTwSjViwDww0vy9Q';
 const SHEET_NAME = 'トレード履歴';
+const DRIVE_FOLDER_KEY = 'fx-gs-drive-folder-v1'; // Google DriveのスクリーンショットフォルダIDをlocalStorageに保持
 // 時間帯自動判定（JST基準）
 function detectSession(dateTimeStr) {
   const m = (dateTimeStr||'').match(/(\d{1,2}):(\d{2})/);
@@ -790,7 +792,7 @@ function submitTrade() {
     concerns: document.getElementById('f-concerns').value,
     emotion: document.getElementById('f-emotion').value,
     notes: document.getElementById('f-notes').value,
-    ssPreview,
+    ssPreview, ssDriveUrl: null,
     fromMT4: false,
   };
   trades.unshift(trade);
@@ -867,7 +869,7 @@ function openEditModal(id) {
   document.getElementById('e-pips').value = t.pips||'';
   document.getElementById('e-amount').value = t.amount||'';
   document.getElementById('e-notes').value = t.notes||'';
-  editSsPreview = t.ssPreview || null;
+  editSsPreview = t.ssPreview || t.ssDriveUrl || null;
   renderEditScreenshotPreview();
   ['e-env','e-reason','e-concerns'].forEach(id=>{
     const s=document.getElementById('mic-status-'+id);
@@ -891,7 +893,15 @@ function saveEdit() {
   t.pipsNum = parseFloat(t.pips)||t.pipsNum||0;
   t.amountNum = parseFloat(t.amount)||t.amountNum||0;
   t.notes = document.getElementById('e-notes').value;
-  t.ssPreview = editSsPreview;
+  // editSsPreviewの中身がBase64（新規アップロード）かDrive URL（既存）かで保存先を振り分ける
+  if(editSsPreview && editSsPreview.startsWith('data:')) {
+    t.ssPreview = editSsPreview; // 新しい画像 → 次回同期時にDriveへアップロードされる
+    t.ssDriveUrl = null; // 古いDrive画像があれば差し替え対象にする
+  } else if(editSsPreview) {
+    t.ssDriveUrl = editSsPreview; // 既存のDrive URLのまま（変更なし）
+  } else {
+    t.ssPreview = null; t.ssDriveUrl = null; // 画像が削除された
+  }
   closeEditModal();
   saveTrades();
 }
@@ -990,7 +1000,7 @@ function parseHTML(html) {
       pipsNum, amountNum:profit,
       entryPrice:openPrice>0?String(openPrice):'', exitPrice:closePrice>0?String(closePrice):'',
       sl:slPrice>0?String(slPrice):'', tp:tpPrice>0?String(tpPrice):'',
-      lot, lotNum,
+      lot, lotNum, ticket:String(ticket),
       session:detectSession(openTimeStr), emotion:'ニュートラル',
       envAnalysis:'', entryReason:'', concerns:'',
       notes:'',
@@ -1042,7 +1052,7 @@ function parseCSV(text) {
       pipsNum:pipsNumC, amountNum:profit,
       entryPrice:cols[5]||'', exitPrice:cols[9]||'',
       sl:cols[6]||'', tp:cols[7]||'',
-      lot:cols[3]||'', lotNum:lotNumC,
+      lot:cols[3]||'', lotNum:lotNumC, ticket:String(cols[0]),
       session:detectSession(cols[1]), emotion:'ニュートラル',
       envAnalysis:'', entryReason:'', concerns:'',
       notes:'', pips:String(pipsNumC), amount:String(profit), fromMT4:true
@@ -1058,10 +1068,31 @@ function parseCSV(text) {
   showImportPreview();
 }
 
+// MT4取込時の重複チェック：既存tradesに同じチケット番号があるものをimportBufferから除外する
+function dedupeImportBuffer() {
+  const existingTickets = new Set(
+    trades.filter(t=>t.ticket).map(t=>String(t.ticket))
+  );
+  const before = importBuffer.length;
+  importBuffer = importBuffer.filter(t => !t.ticket || !existingTickets.has(String(t.ticket)));
+  return before - importBuffer.length; // 除外した件数
+}
+
 function showImportPreview() {
+  const skippedDupes = dedupeImportBuffer();
   const msg=document.getElementById('import-msg');
+  if(!importBuffer.length) {
+    msg.style.cssText='display:block;padding:9px 12px;border-radius:7px;background:#F0B42922;border:1px solid #F0B42944;font-size:13px;color:var(--yellow)';
+    msg.textContent = skippedDupes>0
+      ? `ℹ️ 全${skippedDupes}件はすでに取り込み済みのトレードでした（重複のためスキップ）`
+      : '⚠️ 取り込めるデータがありませんでした';
+    document.getElementById('import-preview').style.display='none';
+    return;
+  }
   msg.style.cssText='display:block;padding:9px 12px;border-radius:7px;background:#3FB95022;border:1px solid #3FB95044;font-size:13px;color:var(--green)';
-  msg.textContent=`✅ ${importBuffer.length}件を検出しました`;
+  msg.textContent = skippedDupes>0
+    ? `✅ ${importBuffer.length}件を検出しました（重複${skippedDupes}件は自動除外済み）`
+    : `✅ ${importBuffer.length}件を検出しました`;
   const prev=document.getElementById('import-preview');
   prev.style.display='block';
   prev.innerHTML=`<div class="card">
@@ -1082,6 +1113,7 @@ function showImportPreview() {
     </div>
   </div>`;
 }
+
 
 function confirmImport() {
   trades = [...importBuffer, ...trades];
@@ -1221,7 +1253,7 @@ function renderTradeDetail(t) {
     ${t.envAnalysis?`<div style="margin-top:10px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--blue2);font-weight:600">🌐 環境認識：</span><br>${t.envAnalysis}</div>`:''}
     ${t.entryReason?`<div style="margin-top:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--green);font-weight:600">📝 エントリー根拠：</span><br>${t.entryReason}</div>`:''}
     ${t.concerns?`<div style="margin-top:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--yellow);font-weight:600">⚠️ 懸念点：</span><br>${t.concerns}</div>`:''}
-    ${t.ssPreview?`<div style="margin-top:10px"><div style="font-size:12px;color:var(--sub);margin-bottom:5px">📸 トレード時のチャート</div><img src="${t.ssPreview}" style="width:100%;border-radius:7px;border:1px solid var(--border)"></div>`:''}
+    ${(t.ssDriveUrl||t.ssPreview)?`<div style="margin-top:10px"><div style="font-size:12px;color:var(--sub);margin-bottom:5px">📸 トレード時のチャート</div><img src="${t.ssDriveUrl||t.ssPreview}" style="width:100%;border-radius:7px;border:1px solid var(--border)" onerror="this.parentElement.innerHTML='<div style=\\'color:var(--sub);font-size:12px;padding:10px\\'>⚠️ 画像を読み込めませんでした</div>'"></div>`:''}
   </div>`;
 }
 
@@ -1509,11 +1541,13 @@ function renderWeakness() {
   `;
 }
 
-// ===== GOOGLE SHEETS =====
+// ===== GOOGLE SHEETS / DRIVE =====
 async function createJWT(email, privateKey) {
   const header=btoa(JSON.stringify({alg:'RS256',typ:'JWT'})).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
   const now=Math.floor(Date.now()/1000);
-  const claim=btoa(JSON.stringify({iss:email,scope:'https://www.googleapis.com/auth/spreadsheets',aud:'https://oauth2.googleapis.com/token',exp:now+3600,iat:now})).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+  // スプレッドシートとDriveの両方にアクセスできるようスコープを拡張（スクリーンショット保存に必要）
+  const scope='https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive';
+  const claim=btoa(JSON.stringify({iss:email,scope,aud:'https://oauth2.googleapis.com/token',exp:now+3600,iat:now})).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
   const pem=privateKey.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
   const der=Uint8Array.from(atob(pem),c=>c.charCodeAt(0));
   const key=await crypto.subtle.importKey('pkcs8',der,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['sign']);
@@ -1530,19 +1564,122 @@ async function getToken(email, pk) {
   return d.access_token;
 }
 
+// ===== Google Drive：スクリーンショット保存 =====
+
+// 専用フォルダを取得（なければ作成）。一度作ったフォルダIDはlocalStorageにキャッシュする。
+async function ensureDriveFolder(token) {
+  const cached = localStorage.getItem(DRIVE_FOLDER_KEY);
+  if(cached) return cached;
+
+  // 既存フォルダを検索（同名フォルダの重複作成を防ぐ）
+  const q = encodeURIComponent("name='FXJournal_Screenshots' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const searchData = await searchRes.json();
+  if(searchData.files && searchData.files.length > 0) {
+    const id = searchData.files[0].id;
+    localStorage.setItem(DRIVE_FOLDER_KEY, id);
+    return id;
+  }
+
+  // 見つからなければ新規作成
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'FXJournal_Screenshots', mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const createData = await createRes.json();
+  if(!createData.id) throw new Error('Driveフォルダの作成に失敗: ' + JSON.stringify(createData));
+  localStorage.setItem(DRIVE_FOLDER_KEY, createData.id);
+  return createData.id;
+}
+
+// Base64の dataURL を Blob に変換
+function dataURLToBlob(dataURL) {
+  const [meta, base64] = dataURL.split(',');
+  const mime = meta.match(/:(.*?);/)[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// 画像をDriveにアップロードし、誰でも閲覧できるURLを返す
+async function uploadScreenshotToDrive(token, folderId, dataURL, tradeId) {
+  const blob = dataURLToBlob(dataURL);
+  const metadata = { name: `trade_${tradeId}.jpg`, parents: [folderId] };
+
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  form.append('file', blob);
+
+  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
+  });
+  const uploadData = await uploadRes.json();
+  if(!uploadData.id) throw new Error('画像アップロード失敗: ' + JSON.stringify(uploadData));
+
+  // リンクを知っていれば誰でも閲覧できるよう権限を付与（サービスアカウント越しの自分専用フォルダなので安全）
+  await fetch(`https://www.googleapis.com/drive/v3/files/${uploadData.id}/permissions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'reader', type: 'anyone' })
+  });
+
+  return `https://drive.google.com/uc?export=view&id=${uploadData.id}`;
+}
+
+// 既存トレードのうちローカルのBase64画像（ssPreview）しか持っていないものを、まとめてDriveにアップロードしてURLに置き換える
+async function migrateScreenshotsToDrive(token) {
+  const targets = trades.filter(t => t.ssPreview && t.ssPreview.startsWith('data:') && !t.ssDriveUrl);
+  if(!targets.length) return 0;
+  const folderId = await ensureDriveFolder(token);
+  let uploaded = 0;
+  for(const t of targets) {
+    try {
+      const url = await uploadScreenshotToDrive(token, folderId, t.ssPreview, t.id);
+      t.ssDriveUrl = url;
+      uploaded++;
+    } catch(e) {
+      console.error('Screenshot upload failed for trade', t.id, e.message);
+    }
+  }
+  return uploaded;
+}
+
 async function syncToGS(showAlert=true) {
   if(!gsSettings) return;
   updateGsBadge('syncing');
   try {
     const token=await getToken(gsSettings.clientEmail, gsSettings.privateKey);
+
+    // 未アップロードのスクリーンショットをDriveに送る（既にURLがあるものはスキップ）
+    let uploadedCount = 0;
+    try {
+      uploadedCount = await migrateScreenshotsToDrive(token);
+    } catch(uploadErr) {
+      console.error('Screenshot migration error:', uploadErr.message);
+      // 画像アップロードに失敗してもスプレッドシート同期自体は続行する
+    }
+
     // Clear sheet
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}:clear`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
-    // Write all
-    const headers=[['ID','日付','通貨ペア','方向','時間帯','ロット','エントリー価格','決済価格','SL','TP','損益(pips)','損益(円)','感情','環境認識','エントリー根拠','懸念点','メモ','MT4']];
-    const rows=trades.map(t=>[String(t.id),t.date,t.pair,t.direction,t.session||'',t.lot||'',t.entryPrice||'',t.exitPrice||'',t.sl||'',t.tp||'',t.pipsNum||'',t.amountNum||'',t.emotion||'',t.envAnalysis||'',t.entryReason||'',t.concerns||'',t.notes||'',t.fromMT4?'MT4':'']);
+    // Write all（スクリーンショットはBase64ではなくDriveのURLだけを保存する）
+    const headers=[['ID','日付','通貨ペア','方向','時間帯','ロット','エントリー価格','決済価格','SL','TP','損益(pips)','損益(円)','感情','環境認識','エントリー根拠','懸念点','メモ','MT4','スクリーンショットURL']];
+    const rows=trades.map(t=>[String(t.id),t.date,t.pair,t.direction,t.session||'',t.lot||'',t.entryPrice||'',t.exitPrice||'',t.sl||'',t.tp||'',t.pipsNum||'',t.amountNum||'',t.emotion||'',t.envAnalysis||'',t.entryReason||'',t.concerns||'',t.notes||'',t.fromMT4?'MT4':'',t.ssDriveUrl||'']);
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(SHEET_NAME+'!A1')}:append?valueInputOption=RAW`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[...headers,...rows]})});
+
+    // localStorageにもssDriveUrlを保存し直す（次回ロード時に再アップロードしないため）
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades.map(t=>({...t,ssPreview:null})))); } catch{}
+
     updateGsBadge('synced');
-    if(showAlert) { const m=document.getElementById('gs-msg');m.style.display='block';m.style.color='var(--green)';m.textContent='✅ 同期しました！'; }
+    if(showAlert) {
+      const m=document.getElementById('gs-msg');m.style.display='block';m.style.color='var(--green)';
+      m.textContent = uploadedCount>0 ? `✅ 同期しました！（画像${uploadedCount}枚をDriveに保存）` : '✅ 同期しました！';
+    }
     setTimeout(()=>updateGsBadge('idle'),3000);
   } catch(e) {
     updateGsBadge('error');
