@@ -1665,19 +1665,23 @@ async function uploadScreenshotToDrive(token, folderId, dataURL, tradeId) {
 // 既存トレードのうちローカルのBase64画像（ssPreview）しか持っていないものを、まとめてDriveにアップロードしてURLに置き換える
 async function migrateScreenshotsToDrive(token) {
   const targets = trades.filter(t => t.ssPreview && t.ssPreview.startsWith('data:') && !t.ssDriveUrl);
-  if(!targets.length) return 0;
+  if(!targets.length) return { uploaded: 0, failed: 0, firstError: null };
   const folderId = await ensureDriveFolder(token);
   let uploaded = 0;
+  let failed = 0;
+  let firstError = null;
   for(const t of targets) {
     try {
       const url = await uploadScreenshotToDrive(token, folderId, t.ssPreview, t.id);
       t.ssDriveUrl = url;
       uploaded++;
     } catch(e) {
+      failed++;
+      if(!firstError) firstError = e.message;
       console.error('Screenshot upload failed for trade', t.id, e.message);
     }
   }
-  return uploaded;
+  return { uploaded, failed, firstError };
 }
 
 async function syncToGS(showAlert=true) {
@@ -1687,10 +1691,12 @@ async function syncToGS(showAlert=true) {
     const token=await getToken(gsSettings.clientEmail, gsSettings.privateKey);
 
     // 未アップロードのスクリーンショットをDriveに送る（既にURLがあるものはスキップ）
-    let uploadedCount = 0;
-    let uploadErrorMsg = null;
+    let uploadedCount = 0, failedCount = 0, uploadErrorMsg = null;
     try {
-      uploadedCount = await migrateScreenshotsToDrive(token);
+      const result = await migrateScreenshotsToDrive(token);
+      uploadedCount = result.uploaded;
+      failedCount = result.failed;
+      uploadErrorMsg = result.firstError;
     } catch(uploadErr) {
       console.error('Screenshot migration error:', uploadErr.message);
       uploadErrorMsg = uploadErr.message;
@@ -1708,17 +1714,17 @@ async function syncToGS(showAlert=true) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades.map(t=>({...t,ssPreview:null})))); } catch{}
 
     updateGsBadge('synced');
-    if(uploadErrorMsg) {
+    if(failedCount > 0 || uploadErrorMsg) {
       // 画像アップロード失敗はモーダルを開いていなくても気づけるよう、常時表示バナーで知らせる
-      showSyncErrorBanner(`📸 スクリーンショットのアップロードに失敗しました: ${uploadErrorMsg}（記録データ自体は同期済みです）`);
+      showSyncErrorBanner(`📸 スクリーンショット${failedCount>0?failedCount+'件の':''}アップロードに失敗しました: ${uploadErrorMsg||'不明なエラー'}（記録データ自体は同期済みです）`);
     } else {
       hideSyncErrorBanner();
     }
     if(showAlert) {
       const m=document.getElementById('gs-msg');m.style.display='block';
-      if(uploadErrorMsg) {
+      if(failedCount > 0 || uploadErrorMsg) {
         m.style.color='var(--yellow)';
-        m.textContent = `⚠️ シートは同期しましたが、画像アップロードに失敗しました: ${uploadErrorMsg}`;
+        m.textContent = `⚠️ シートは同期しましたが、画像アップロードに失敗しました: ${uploadErrorMsg||'不明なエラー'}`;
       } else {
         m.style.color='var(--green)';
         m.textContent = uploadedCount>0 ? `✅ 同期しました！（画像${uploadedCount}枚をDriveに保存）` : '✅ 同期しました！';
