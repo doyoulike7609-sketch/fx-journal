@@ -166,6 +166,7 @@
       <div class="card-title">基本情報</div>
       <div class="row">
         <div class="field"><div class="label">日付</div><input type="date" id="f-date"></div>
+        <div class="field"><div class="label">エントリー時刻</div><input type="time" id="f-time"></div>
         <div class="field"><div class="label">通貨ペア</div>
           <select id="f-pair">
             <option>USD/JPY</option><option>EUR/JPY</option><option>GBP/JPY</option><option>AUD/JPY</option>
@@ -360,6 +361,10 @@
       <div style="flex:1">
         <div class="label">ロット</div>
         <input type="number" step="0.01" id="e-lot" placeholder="0.10" style="margin-top:4px;color:var(--yellow)">
+      </div>
+      <div style="flex:1">
+        <div class="label">時刻</div>
+        <input type="time" id="e-time" style="margin-top:4px">
       </div>
     </div>
     <div style="margin-bottom:12px">
@@ -811,6 +816,7 @@ function submitTrade() {
   const trade = {
     id: Date.now(),
     date: document.getElementById('f-date').value,
+    entryTime: document.getElementById('f-time').value,
     pair: document.getElementById('f-pair').value,
     session: document.getElementById('f-session').value,
     direction: currentDir,
@@ -846,6 +852,7 @@ function submitTrade() {
   document.getElementById('f-concerns').value='';
   document.getElementById('f-notes').value='';
   document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('f-time').value='';
   const hadScreenshot = !!ssPreview; // リセット前に画像有無を記録しておく
   ssPreview=null;
   renderScreenshotPreview();
@@ -981,6 +988,7 @@ function openEditModal(id) {
   if(!t) { console.error('Trade not found:', id, trades.map(x=>x.id)); return; }
   document.getElementById('e-emotion').value = t.emotion||'ニュートラル';
   document.getElementById('e-lot').value = t.lot||'';
+  document.getElementById('e-time').value = t.entryTime||'';
   document.getElementById('e-env').value = t.envAnalysis||'';
   document.getElementById('e-reason').value = t.entryReason||'';
   document.getElementById('e-concerns').value = t.concerns||'';
@@ -1003,6 +1011,7 @@ function saveEdit() {
   t.emotion = document.getElementById('e-emotion').value;
   t.lot = document.getElementById('e-lot').value;
   t.lotNum = parseFloat(t.lot)||0;
+  t.entryTime = document.getElementById('e-time').value;
   t.envAnalysis = document.getElementById('e-env').value;
   t.entryReason = document.getElementById('e-reason').value;
   t.concerns = document.getElementById('e-concerns').value;
@@ -1499,6 +1508,15 @@ function renderWeakness() {
   const el=document.getElementById('weakness-content');
   if(!trades.length){el.innerHTML='<div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">⚠️</div>トレードを記録すると弱点分析が表示されます</div>';return;}
   const losses=trades.filter(t=>(t.pipsNum||t.amountNum)<0);
+
+  // ===== 時系列順（古い→新しい）に並べたトレード列。日付＋エントリー時刻で正確にソート =====
+  const chronological = [...trades].sort((a,b)=>{
+    const da = new Date(`${a.date}T${a.entryTime||'00:00'}`);
+    const db = new Date(`${b.date}T${b.entryTime||'00:00'}`);
+    return da-db;
+  });
+  const resultOf = t => (t.pipsNum||t.amountNum)>0;
+
   // Loss causes
   const causes={};
   const ADVICE={'感情エラー':'エントリー前に30秒待つルールを設けましょう。','早すぎる損切り':'SLを設定したら手動決済は原則禁止にしましょう。','リスクリワード不良':'エントリー前にRRR1:1.5以上を確認しましょう。','根拠の言語化不足':'「なぜ入るか」を言葉で説明できないトレードはスキップしましょう。','環境認識が不明確':'エントリー前に必ず上位足を確認しましょう。','重複時間帯リスク':'重複時間帯はロットを減らすか様子見を検討してください。','相場環境ミス':'上位足のトレンド確認を習慣化しましょう。'};
@@ -1529,6 +1547,71 @@ function renderWeakness() {
   // Streaks
   let maxLose=0,maxWin=0,cL=0,cW=0;
   [...trades].reverse().forEach(t=>{const w=(t.pipsNum||t.amountNum)>0;if(w){cW++;cL=0;}else{cL++;cW=0;}maxWin=Math.max(maxWin,cW);maxLose=Math.max(maxLose,cL);});
+
+  // ===== ①通貨ペア×方向の勝率・損益（特にゴールドBUY/SELLの差を見たいという要望） =====
+  const pairDirStats={};
+  trades.forEach(t=>{
+    const key=`${t.pair}_${t.direction}`;
+    if(!pairDirStats[key]) pairDirStats[key]={pair:t.pair,direction:t.direction,count:0,wins:0,totalAmt:0};
+    pairDirStats[key].count++;
+    if(resultOf(t)) pairDirStats[key].wins++;
+    pairDirStats[key].totalAmt+=(t.amountNum||0);
+  });
+  // 同じペアでBUY/SELLの両方が2件以上ある場合のみ「差」として意味があるので、そういうペアを優先表示
+  const pairGroups={};
+  Object.values(pairDirStats).forEach(d=>{
+    if(!pairGroups[d.pair]) pairGroups[d.pair]=[];
+    pairGroups[d.pair].push(d);
+  });
+
+  // ===== ②連敗後の挙動パターン（2連敗以上の直後のトレードを抽出して通常時と比較） =====
+  const afterStreak=[], normalTrades=[];
+  let curLoseStreak=0;
+  chronological.forEach(t=>{
+    if(curLoseStreak>=2) afterStreak.push(t); else normalTrades.push(t);
+    if(resultOf(t)) curLoseStreak=0; else curLoseStreak++;
+  });
+  const streakStats = (arr)=>{
+    if(!arr.length) return null;
+    const w=arr.filter(resultOf).length;
+    const avgLot=arr.reduce((s,t)=>s+(t.lotNum||parseFloat(t.lot)||0),0)/arr.length;
+    const totalAmt=arr.reduce((s,t)=>s+(t.amountNum||0),0);
+    const emoCount={};
+    arr.forEach(t=>{const e=t.emotion||'ニュートラル';emoCount[e]=(emoCount[e]||0)+1;});
+    const topEmo=Object.entries(emoCount).sort((a,b)=>b[1]-a[1])[0];
+    return {count:arr.length,wr:(w/arr.length*100).toFixed(0),avgLot:avgLot.toFixed(2),totalAmt,topEmo};
+  };
+  const afterStreakStats=streakStats(afterStreak);
+  const normalStats=streakStats(normalTrades);
+
+  // ===== ③感情の連鎖分析（ある感情の次のトレードはどんな感情・結果になりやすいか） =====
+  const emotionChain={}; // {感情A: {次の感情B: 件数, ...}}
+  const emotionNextResult={}; // {感情A: {win, lose}} 次のトレードの勝敗
+  for(let i=0;i<chronological.length-1;i++){
+    const cur=chronological[i].emotion||'ニュートラル';
+    const next=chronological[i+1];
+    const nextEmo=next.emotion||'ニュートラル';
+    if(!emotionChain[cur]) emotionChain[cur]={};
+    emotionChain[cur][nextEmo]=(emotionChain[cur][nextEmo]||0)+1;
+    if(!emotionNextResult[cur]) emotionNextResult[cur]={win:0,lose:0};
+    if(resultOf(next)) emotionNextResult[cur].win++; else emotionNextResult[cur].lose++;
+  }
+  // 注目すべき連鎖：「次に感情が崩れやすい」「次に負けやすい」もの上位3つ
+  const RISKY_EMOTIONS=['FOMO（乗り遅れ恐怖）','過信','恐怖・躊躇','報復トレード衝動'];
+  const chainInsights=[];
+  Object.entries(emotionChain).forEach(([from,toMap])=>{
+    const total=Object.values(toMap).reduce((a,b)=>a+b,0);
+    if(total<2) return; // サンプル少なすぎる組み合わせは除外
+    const riskyCount=Object.entries(toMap).filter(([e])=>RISKY_EMOTIONS.includes(e)).reduce((s,[,c])=>s+c,0);
+    const riskyRate=riskyCount/total;
+    const nr=emotionNextResult[from];
+    const nextLoseRate = nr && (nr.win+nr.lose)>0 ? nr.lose/(nr.win+nr.lose) : 0;
+    if(riskyRate>=0.4 || nextLoseRate>=0.6){
+      chainInsights.push({from,total,riskyRate,nextLoseRate,nr});
+    }
+  });
+  chainInsights.sort((a,b)=>(b.riskyRate+b.nextLoseRate)-(a.riskyRate+a.nextLoseRate));
+
   const top=Object.entries(causes).sort((a,b)=>b[1].count-a[1].count)[0];
   const causesHTML=!losses.length?'<div style="color:var(--green);text-align:center;padding:10px">負けトレードがありません 🎉</div>':
     Object.entries(causes).sort((a,b)=>b[1].count-a[1].count).map(([c,d])=>{
@@ -1563,7 +1646,102 @@ function renderWeakness() {
       </div>
     </div>`;
   }).join('');
+
+  // ===== ①の表示HTML：ペアごとにBUY/SELLを並べる =====
+  const pairDirHTML = Object.entries(pairGroups).sort((a,b)=>{
+    const totalA=a[1].reduce((s,d)=>s+d.count,0), totalB=b[1].reduce((s,d)=>s+d.count,0);
+    return totalB-totalA;
+  }).map(([pair,dirs])=>{
+    const sortedDirs=dirs.sort((a,b)=>a.direction==='BUY'?-1:1);
+    const rows=sortedDirs.map(d=>{
+      const wr=(d.wins/d.count*100).toFixed(0);
+      const col=wr>=55?'var(--green)':wr>=40?'var(--yellow)':'var(--red)';
+      const dirCol=d.direction==='BUY'?'var(--green)':'var(--red)';
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="tag" style="background:${d.direction==='BUY'?'#3FB95022':'#F8514922'};color:${dirCol};border:1px solid ${d.direction==='BUY'?'#3FB95044':'#F8514944'};width:42px;text-align:center;flex-shrink:0">${d.direction}</span>
+        <div style="flex:1;height:8px;background:#21262D;border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${wr}%;background:${col};border-radius:4px"></div>
+        </div>
+        <span style="font-size:11px;color:${col};font-weight:700;width:36px;text-align:right;flex-shrink:0">${wr}%</span>
+        <span style="font-size:10px;color:var(--sub);width:60px;text-align:right;flex-shrink:0">${d.count}件・${(d.totalAmt>=0?'+':'')+d.totalAmt.toLocaleString()}円</span>
+      </div>`;
+    }).join('');
+    // BUY/SELL両方あって差が大きい場合は警告を出す
+    let warning='';
+    if(sortedDirs.length===2){
+      const [buyD,sellD]=sortedDirs;
+      const buyWr=buyD.count?buyD.wins/buyD.count*100:0, sellWr=sellD.count?sellD.wins/sellD.count*100:0;
+      if(Math.abs(buyWr-sellWr)>=25 && Math.min(buyD.count,sellD.count)>=2){
+        const weaker=buyWr<sellWr?'BUY':'SELL';
+        const weakerWr=Math.min(buyWr,sellWr).toFixed(0);
+        warning=`<div style="margin-top:6px;font-size:11px;color:var(--yellow)">⚡ ${weaker}側が弱い傾向（勝率${weakerWr}%）。${weaker}でのエントリー根拠を見直す価値がありそうです。</div>`;
+      }
+    }
+    return `<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #21262D11">
+      <div style="font-size:13px;font-weight:600;color:var(--sub2);margin-bottom:8px">${pair}</div>
+      ${rows}
+      ${warning}
+    </div>`;
+  }).join('');
+
+  // ===== ②の表示HTML：連敗後 vs 通常時の比較 =====
+  let streakCompareHTML='';
+  if(afterStreakStats && normalStats){
+    const wrDiff = parseFloat(afterStreakStats.wr) - parseFloat(normalStats.wr);
+    const lotDiff = parseFloat(afterStreakStats.avgLot) - parseFloat(normalStats.avgLot);
+    streakCompareHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div style="background:#0D1117;border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div style="font-size:11px;color:var(--sub);margin-bottom:6px">通常時</div>
+          <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:${parseFloat(normalStats.wr)>=50?'var(--green)':'var(--red)'}">${normalStats.wr}%</div>
+          <div style="font-size:10px;color:var(--sub);margin-top:2px">勝率（${normalStats.count}件）</div>
+          <div style="font-size:11px;color:var(--yellow);margin-top:6px">平均ロット ${normalStats.avgLot}</div>
+        </div>
+        <div style="background:#0D1117;border:1px solid ${wrDiff<0?'#F8514944':'var(--border)'};border-radius:8px;padding:12px">
+          <div style="font-size:11px;color:var(--sub);margin-bottom:6px">2連敗以上の直後</div>
+          <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:${parseFloat(afterStreakStats.wr)>=50?'var(--green)':'var(--red)'}">${afterStreakStats.wr}%</div>
+          <div style="font-size:10px;color:var(--sub);margin-top:2px">勝率（${afterStreakStats.count}件）</div>
+          <div style="font-size:11px;color:var(--yellow);margin-top:6px">平均ロット ${afterStreakStats.avgLot}${lotDiff>0.01?` <span style="color:var(--red)">(+${lotDiff.toFixed(2)})</span>`:''}</div>
+        </div>
+      </div>
+      ${(wrDiff<=-10 || lotDiff>0.02)?`<div style="background:#F8514911;border:1px solid #F8514933;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6">
+        <span style="color:var(--red);font-weight:600">🚨 傾向検出：</span>
+        <span style="color:var(--sub)">
+          ${wrDiff<=-10?`連敗後は勝率が${Math.abs(wrDiff).toFixed(0)}ポイント下がっています。`:''}
+          ${lotDiff>0.02?`連敗後はロットが平均${lotDiff.toFixed(2)}大きくなる傾向があります（取り返そうとする心理かもしれません）。`:''}
+          ${afterStreakStats.topEmo?` この状況で最も多い感情は「${afterStreakStats.topEmo[0]}」（${afterStreakStats.topEmo[1]}件）でした。`:''}
+        </span>
+      </div>`:`<div style="color:var(--sub);font-size:12px;text-align:center;padding:8px">連敗後も大きな崩れは見られません</div>`}
+    `;
+  } else {
+    streakCompareHTML = '<div style="color:var(--sub);font-size:12px;text-align:center;padding:10px">2連敗以上のデータがまだ少ないため分析できません</div>';
+  }
+
+  // ===== ③の表示HTML：感情の連鎖 =====
+  let chainHTML='';
+  if(chainInsights.length===0){
+    chainHTML = '<div style="color:var(--sub);font-size:12px;text-align:center;padding:10px">明確な感情の連鎖パターンはまだ見つかっていません（データが増えると検出されやすくなります）</div>';
+  } else {
+    chainHTML = chainInsights.slice(0,3).map(ci=>{
+      const total=ci.total;
+      const topNext=Object.entries(emotionChain[ci.from]).sort((a,b)=>b[1]-a[1])[0];
+      const lossRatePct=(ci.nextLoseRate*100).toFixed(0);
+      return `<div style="background:#0D1117;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+          <span class="tag" style="background:#8B949E22;color:var(--sub2);border:1px solid #8B949E44">${ci.from}</span>
+          <span style="color:var(--sub);font-size:12px">→ 次は</span>
+          <span class="tag" style="background:${RISKY_EMOTIONS.includes(topNext[0])?'#F8514922':'#3FB95022'};color:${RISKY_EMOTIONS.includes(topNext[0])?'var(--red)':'var(--green)'};border:1px solid ${RISKY_EMOTIONS.includes(topNext[0])?'#F8514944':'#3FB95044'}">${topNext[0]}</span>
+          <span style="color:var(--sub);font-size:11px">になりやすい（${topNext[1]}/${total}回）</span>
+        </div>
+        <div style="font-size:11px;color:var(--sub)">この感情の次のトレードの負け率：<span style="color:${ci.nextLoseRate>=0.5?'var(--red)':'var(--sub2)'};font-weight:700">${lossRatePct}%</span></div>
+      </div>`;
+    }).join('');
+  }
+
   el.innerHTML=`
+    <div class="card"><div class="card-title">📊 通貨ペア × 方向（BUY/SELL）の傾向</div>${pairDirHTML||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'}</div>
+    <div class="card"><div class="card-title">🔁 連敗後の挙動パターン</div>${streakCompareHTML}</div>
+    <div class="card"><div class="card-title">🔗 感情の連鎖パターン</div>${chainHTML}</div>
     <div class="card"><div class="card-title">⚠️ 負けパターン自動分類</div>${causesHTML}</div>
     <div class="card"><div class="card-title">🕐 時間帯別 勝率・損益</div>
       ${sessionRows||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'}
