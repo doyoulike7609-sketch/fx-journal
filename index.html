@@ -123,6 +123,10 @@
   .mic-status.recording{color:#F85149;font-weight:600;}
   .mic-status.processing{color:#F0B429;font-weight:600;}
   .mic-status.success{color:#3FB950;}
+
+  /* Period filter buttons */
+  .period-btn{padding:6px 12px;background:#0D1117;border:1px solid var(--border2);border-radius:20px;color:var(--sub);font-size:12px;font-weight:500;transition:all .15s;}
+  .period-btn.active{background:#1F6FEB22;border-color:var(--blue);color:var(--blue2);font-weight:700;}
 </style>
 </head>
 <body>
@@ -264,6 +268,22 @@
 
   <!-- 統計タブ -->
   <div class="tab-panel" id="panel-1">
+    <div class="card" style="padding:12px 14px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="period-btn active" data-period="all" onclick="setStatsPeriod('all')">全期間</button>
+        <button class="period-btn" data-period="today" onclick="setStatsPeriod('today')">本日</button>
+        <button class="period-btn" data-period="7d" onclick="setStatsPeriod('7d')">直近7日</button>
+        <button class="period-btn" data-period="1m" onclick="setStatsPeriod('1m')">1ヶ月</button>
+        <button class="period-btn" data-period="3m" onclick="setStatsPeriod('3m')">3ヶ月</button>
+        <button class="period-btn" data-period="ytd" onclick="setStatsPeriod('ytd')">今年</button>
+        <button class="period-btn" data-period="custom" onclick="setStatsPeriod('custom')">期間指定</button>
+      </div>
+      <div id="custom-period-inputs" style="display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="date" id="period-from" onchange="renderStats()" style="max-width:160px">
+        <span style="color:var(--sub);font-size:12px">〜</span>
+        <input type="date" id="period-to" onchange="renderStats()" style="max-width:160px">
+      </div>
+    </div>
     <div id="stats-content"><div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📊</div>トレードを記録すると統計が表示されます</div></div>
   </div>
 
@@ -341,19 +361,31 @@
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
         <span class="env-tag" style="background:#1F6FEB22;color:var(--blue2)">環境認識</span>
       </div>
-      <textarea id="e-env" placeholder="上位足の状況・トレンド方向"></textarea>
+      <div style="position:relative">
+        <textarea id="e-env" placeholder="上位足の状況・トレンド方向" style="padding-right:44px"></textarea>
+        <button type="button" class="mic-btn" id="mic-e-env" onclick="toggleMic('e-env','#58A6FF')" style="position:absolute;right:8px;top:8px">🎤</button>
+      </div>
+      <div class="mic-status" id="mic-status-e-env"></div>
     </div>
     <div style="margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
         <span class="env-tag" style="background:#3FB95022;color:var(--green)">エントリー根拠</span>
       </div>
-      <textarea id="e-reason" placeholder="何を見てどう判断したか"></textarea>
+      <div style="position:relative">
+        <textarea id="e-reason" placeholder="何を見てどう判断したか" style="padding-right:44px"></textarea>
+        <button type="button" class="mic-btn" id="mic-e-reason" onclick="toggleMic('e-reason','#3FB950')" style="position:absolute;right:8px;top:8px">🎤</button>
+      </div>
+      <div class="mic-status" id="mic-status-e-reason"></div>
     </div>
     <div style="margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
         <span class="env-tag" style="background:#F0B42922;color:var(--yellow)">懸念点</span>
       </div>
-      <textarea id="e-concerns" placeholder="リスク・迷い" style="min-height:56px"></textarea>
+      <div style="position:relative">
+        <textarea id="e-concerns" placeholder="リスク・迷い" style="min-height:56px;padding-right:44px"></textarea>
+        <button type="button" class="mic-btn" id="mic-e-concerns" onclick="toggleMic('e-concerns','#F0B429')" style="position:absolute;right:8px;top:8px">🎤</button>
+      </div>
+      <div class="mic-status" id="mic-status-e-concerns"></div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <div style="flex:1"><div class="label">損益（pips）</div><input type="number" id="e-pips" style="margin-top:4px"></div>
@@ -362,6 +394,14 @@
     <div style="margin-bottom:16px">
       <div class="label">振り返りメモ</div>
       <textarea id="e-notes" placeholder="良かった点・反省点..." style="margin-top:4px;min-height:56px"></textarea>
+    </div>
+    <div style="margin-bottom:16px">
+      <div class="label">スクリーンショット</div>
+      <div class="dropzone" onclick="document.getElementById('e-ss').click()" id="e-ss-preview-wrap" style="margin-top:4px">
+        <span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>
+      </div>
+      <input type="file" id="e-ss" accept="image/*" style="display:none" onchange="handleEditScreenshot(this)">
+      <button type="button" id="e-ss-remove" onclick="removeEditScreenshot()" style="display:none;margin-top:6px;padding:5px 10px;background:none;border:1px solid var(--border2);border-radius:6px;color:var(--sub);font-size:11px">🗑️ 画像を削除</button>
     </div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-green" style="flex:1;justify-content:center" onclick="saveEdit()">💾 保存する</button>
@@ -437,10 +477,12 @@ let trades = [];
 let gsSettings = null;
 let currentDir = 'BUY';
 let editingId = null;
+let editSsPreview = null;
 let importBuffer = [];
 let ssPreview = null;
 let syncTimer = null;
 let tvWidget = null;
+let statsPeriod = 'all';
 
 // ===== INIT =====
 window.onload = () => {
@@ -511,6 +553,33 @@ function handleScreenshot(input) {
   reader.readAsDataURL(file);
 }
 
+function handleEditScreenshot(input) {
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    editSsPreview = e.target.result;
+    renderEditScreenshotPreview();
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeEditScreenshot() {
+  editSsPreview = null;
+  renderEditScreenshotPreview();
+}
+
+function renderEditScreenshotPreview() {
+  const wrap = document.getElementById('e-ss-preview-wrap');
+  const removeBtn = document.getElementById('e-ss-remove');
+  if(editSsPreview) {
+    wrap.innerHTML = `<img src="${editSsPreview}" style="max-width:100%;max-height:160px;border-radius:6px">`;
+    removeBtn.style.display = 'inline-block';
+  } else {
+    wrap.innerHTML = '<span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>';
+    removeBtn.style.display = 'none';
+  }
+}
+
 function updateRRR() {
   const entry=parseFloat(document.getElementById('f-entry').value);
   const sl=parseFloat(document.getElementById('f-sl').value);
@@ -533,6 +602,10 @@ const MIC_PROMPTS = {
   'f-env': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「環境認識（上位足の状況・トレンド方向・ダウ理論・ライン分析など）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語（ダウ理論、水平線、トレンドライン、MA、フィボナッチ、チャートパターン、NEVなど）はそのまま使い、フィラー語（えーと、あのー等）や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
   'f-reason': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「エントリー根拠（プライスアクション・テクニカルの判断）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語はそのまま使い、フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
   'f-concerns': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「懸念点（エントリー前に感じたリスクや迷い）」のメモです。自然な日本語の記録文（1〜2文）に整理してください。フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
+  // 履歴編集モーダル用（記録フォームと同じ整形ルール）
+  'e-env': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「環境認識（上位足の状況・トレンド方向・ダウ理論・ライン分析など）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語（ダウ理論、水平線、トレンドライン、MA、フィボナッチ、チャートパターン、NEVなど）はそのまま使い、フィラー語（えーと、あのー等）や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
+  'e-reason': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「エントリー根拠（プライスアクション・テクニカルの判断）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語はそのまま使い、フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
+  'e-concerns': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「懸念点（エントリー前に感じたリスクや迷い）」のメモです。自然な日本語の記録文（1〜2文）に整理してください。フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
 };
 
 function getSpeechRecognition() {
@@ -751,7 +824,7 @@ function renderHistory() {
           ${t.sl?`<span style="color:#F8514988">SL:${t.sl}</span>`:''}
           ${t.tp?`<span style="color:#3FB95088">TP:${t.tp}</span>`:''}
         </div>`:''}
-        ${t.envAnalysis&&t.envAnalysis!=='MT4インポート'?`<div style="margin-top:3px;font-size:11px;color:#58A6FF88;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🌐 ${t.envAnalysis}</div>`:''}
+        ${t.envAnalysis?`<div style="margin-top:3px;font-size:11px;color:#58A6FF88;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🌐 ${t.envAnalysis}</div>`:''}
         ${t.entryReason?`<div style="margin-top:2px;font-size:11px;color:#3FB95088;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ${t.entryReason}</div>`:''}
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
@@ -776,10 +849,16 @@ function openEditModal(id) {
   document.getElementById('e-pips').value = t.pips||'';
   document.getElementById('e-amount').value = t.amount||'';
   document.getElementById('e-notes').value = t.notes||'';
+  editSsPreview = t.ssPreview || null;
+  renderEditScreenshotPreview();
+  ['e-env','e-reason','e-concerns'].forEach(id=>{
+    const s=document.getElementById('mic-status-'+id);
+    if(s){s.textContent='';s.className='mic-status';}
+  });
   document.getElementById('edit-modal').classList.add('open');
 }
 
-function closeEditModal() { document.getElementById('edit-modal').classList.remove('open'); editingId=null; hideDeleteConfirm(); }
+function closeEditModal() { document.getElementById('edit-modal').classList.remove('open'); editingId=null; editSsPreview=null; hideDeleteConfirm(); }
 
 function saveEdit() {
   const t = trades.find(x=>String(x.id)===String(editingId)); if(!t) return;
@@ -794,6 +873,7 @@ function saveEdit() {
   t.pipsNum = parseFloat(t.pips)||t.pipsNum||0;
   t.amountNum = parseFloat(t.amount)||t.amountNum||0;
   t.notes = document.getElementById('e-notes').value;
+  t.ssPreview = editSsPreview;
   closeEditModal();
   saveTrades();
 }
@@ -894,8 +974,8 @@ function parseHTML(html) {
       sl:slPrice>0?String(slPrice):'', tp:tpPrice>0?String(tpPrice):'',
       lot, lotNum,
       session:detectSession(openTimeStr), emotion:'ニュートラル',
-      envAnalysis:'MT4インポート', entryReason:'', concerns:'',
-      notes:`Ticket:${ticket} Commission:${commission} Swap:${swap}`,
+      envAnalysis:'', entryReason:'', concerns:'',
+      notes:'',
       pips:String(pipsNum), amount:String(profit), fromMT4:true
     });
   });
@@ -946,8 +1026,8 @@ function parseCSV(text) {
       sl:cols[6]||'', tp:cols[7]||'',
       lot:cols[3]||'', lotNum:lotNumC,
       session:detectSession(cols[1]), emotion:'ニュートラル',
-      envAnalysis:'MT4インポート', entryReason:'', concerns:'',
-      notes:`Ticket:${cols[0]}`, pips:String(pipsNumC), amount:String(profit), fromMT4:true
+      envAnalysis:'', entryReason:'', concerns:'',
+      notes:'', pips:String(pipsNumC), amount:String(profit), fromMT4:true
     });
   }
   if(!importBuffer.length){
@@ -1120,17 +1200,60 @@ function renderTradeDetail(t) {
     <div class="card-title">${t.pair} &nbsp;<span class="tag" style="background:${t.direction==='BUY'?'#3FB95022':'#F8514922'};color:${t.direction==='BUY'?'var(--green)':'var(--red)'};border:1px solid ${t.direction==='BUY'?'#3FB95044':'#F8514944'}">${t.direction}</span>&nbsp;<span style="color:var(--sub);font-size:11px;font-weight:400">${t.date}</span></div>
     ${won!==undefined?`<div style="margin-bottom:10px"><span class="tag" style="background:${won?'#3FB95022':'#F8514922'};color:${won?'var(--green)':'var(--red)'};border:1px solid ${won?'#3FB95044':'#F8514944'}">${won?'✅ 利益確定':'❌ 損切り'}</span></div>`:''}
     ${ladderHTML}${rrr}
-    ${t.envAnalysis&&t.envAnalysis!=='MT4インポート'?`<div style="margin-top:10px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--blue2);font-weight:600">🌐 環境認識：</span><br>${t.envAnalysis}</div>`:''}
+    ${t.envAnalysis?`<div style="margin-top:10px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--blue2);font-weight:600">🌐 環境認識：</span><br>${t.envAnalysis}</div>`:''}
     ${t.entryReason?`<div style="margin-top:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--green);font-weight:600">📝 エントリー根拠：</span><br>${t.entryReason}</div>`:''}
     ${t.concerns?`<div style="margin-top:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--yellow);font-weight:600">⚠️ 懸念点：</span><br>${t.concerns}</div>`:''}
     ${t.ssPreview?`<div style="margin-top:10px"><div style="font-size:12px;color:var(--sub);margin-bottom:5px">📸 トレード時のチャート</div><img src="${t.ssPreview}" style="width:100%;border-radius:7px;border:1px solid var(--border)"></div>`:''}
   </div>`;
 }
 
+// ===== 統計タブ：期間フィルター =====
+function setStatsPeriod(period) {
+  statsPeriod = period;
+  document.querySelectorAll('.period-btn').forEach(b=>b.classList.toggle('active', b.dataset.period===period));
+  const customEl = document.getElementById('custom-period-inputs');
+  customEl.style.display = period==='custom' ? 'flex' : 'none';
+  if(period==='custom') {
+    const fromEl=document.getElementById('period-from'), toEl=document.getElementById('period-to');
+    if(!toEl.value) toEl.value = new Date().toISOString().slice(0,10);
+    if(!fromEl.value) {
+      const d=new Date(); d.setDate(d.getDate()-30);
+      fromEl.value = d.toISOString().slice(0,10);
+    }
+  }
+  renderStats();
+}
+
+function getFilteredTradesForStats() {
+  if(statsPeriod==='all') return trades;
+  const now = new Date();
+  let fromDate = null, toDate = null;
+  if(statsPeriod==='today') {
+    fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999);
+  }
+  else if(statsPeriod==='7d') { fromDate=new Date(now); fromDate.setDate(fromDate.getDate()-7); }
+  else if(statsPeriod==='1m') { fromDate=new Date(now); fromDate.setMonth(fromDate.getMonth()-1); }
+  else if(statsPeriod==='3m') { fromDate=new Date(now); fromDate.setMonth(fromDate.getMonth()-3); }
+  else if(statsPeriod==='ytd') { fromDate=new Date(now.getFullYear(),0,1); }
+  else if(statsPeriod==='custom') {
+    const f=document.getElementById('period-from').value, t=document.getElementById('period-to').value;
+    if(f) fromDate=new Date(f);
+    if(t) { toDate=new Date(t); toDate.setHours(23,59,59,999); }
+  }
+  return trades.filter(t=>{
+    const d = new Date(t.date);
+    if(fromDate && d<fromDate) return false;
+    if(toDate && d>toDate) return false;
+    return true;
+  });
+}
+
 // ===== STATS =====
 function renderStats() {
   const el=document.getElementById('stats-content');
-  if(!trades.length){el.innerHTML='<div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📊</div>トレードを記録すると統計が表示されます</div>';return;}
+  const trades = getFilteredTradesForStats();
+  if(!trades.length){el.innerHTML='<div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📊</div>この期間のトレードがありません</div>';return;}
   // 勝敗判定は「pipsNumが入っていればpips、なければamountNum」を見て統一的に判定
   const resultOf = t => t.pipsNum!==0 ? t.pipsNum : t.amountNum;
   const wins=trades.filter(t=>resultOf(t)>0);
@@ -1155,12 +1278,14 @@ function renderStats() {
   const sorted=[...trades].sort((a,b)=>new Date(a.date)-new Date(b.date));
   let cum=0,peak=0,trough=0,maxDD=0;
   const curve=sorted.map(t=>{cum+=(t.amountNum||0);peak=Math.max(peak,cum);trough=Math.min(trough,cum);maxDD=Math.max(maxDD,peak-cum);return{date:t.date,v:Math.round(cum)};});
-  // By pair/session/emotion: pipsとamountを別々に正確に集計（根拠のない換算をしない）
-  const byPair={},bySess={},byEmo={},byLot={};
+  // By pair/session/weekday: pipsとamountを別々に正確に集計（根拠のない換算をしない）
+  const WEEKDAY_NAMES = ['日','月','火','水','木','金','土'];
+  const byPair={},bySess={},byWeekday={},byLot={};
   trades.forEach(t=>{
     const pipsV = t.pipsNum||0;
     const amtV = t.amountNum||0;
-    [[t.pair,byPair],[t.session,bySess],[t.emotion,byEmo]].forEach(([k,obj])=>{
+    const wd = WEEKDAY_NAMES[new Date(t.date).getDay()];
+    [[t.pair,byPair],[t.session,bySess],[wd,byWeekday]].forEach(([k,obj])=>{
       if(!obj[k]) obj[k]={totalPips:0,totalAmt:0,count:0};
       obj[k].totalPips+=pipsV; obj[k].totalAmt+=amtV; obj[k].count++;
     });
@@ -1175,7 +1300,7 @@ function renderStats() {
   const hasPipsData = trades.some(t=>t.pipsNum!==0);
   const maxPair=Math.max(...Object.values(byPair).map(v=>Math.abs(v.totalAmt)),1);
   const maxSess=Math.max(...Object.values(bySess).map(v=>Math.abs(v.totalAmt)),1);
-  const maxEmo=Math.max(...Object.values(byEmo).map(v=>Math.abs(v.totalAmt)),1);
+  const maxWeekday=Math.max(...Object.values(byWeekday).map(v=>Math.abs(v.totalAmt)),1);
   // Equity SVG（円ベース）
   let equitySVG='';
   if(curve.length>=2){
@@ -1201,14 +1326,20 @@ function renderStats() {
     </div>`;
   }
   // Bar chart helper（円ベースで統一表示。pipsはペアごとに価値が異なるため、横断比較には円が正確）
-  const barChart=(data,maxV,lw)=>Object.entries(data).sort((a,b)=>b[1].totalAmt-a[1].totalAmt).map(([k,d])=>{
-    const pct=Math.min(Math.abs(d.totalAmt)/maxV*100,100);const isPos=d.totalAmt>=0;
-    const label=Math.abs(d.totalAmt)>=10000?(d.totalAmt/10000).toFixed(1)+'万':d.totalAmt.toFixed(0);
-    return `<div class="bar-row"><div class="bar-label" style="width:${lw}">${k.split('(')[0]}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${isPos?'var(--green)':'var(--red)'}">
-        ${pct>15?(isPos?'+':'')+label:''}</div></div>
-      <span style="font-size:10px;color:var(--sub);width:30px;flex-shrink:0">${d.count}件</span></div>`;
-  }).join('');
+  // sortOrder未指定時は損益降順。指定時はその順序（曜日など固定順で表示したい場合用）。
+  const barChart=(data,maxV,lw,sortOrder)=>{
+    const entries = sortOrder
+      ? sortOrder.filter(k=>data[k]).map(k=>[k,data[k]])
+      : Object.entries(data).sort((a,b)=>b[1].totalAmt-a[1].totalAmt);
+    return entries.map(([k,d])=>{
+      const pct=Math.min(Math.abs(d.totalAmt)/maxV*100,100);const isPos=d.totalAmt>=0;
+      const label=Math.abs(d.totalAmt)>=10000?(d.totalAmt/10000).toFixed(1)+'万':d.totalAmt.toFixed(0);
+      return `<div class="bar-row"><div class="bar-label" style="width:${lw}">${k.split('(')[0]}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${isPos?'var(--green)':'var(--red)'}">
+          ${pct>15?(isPos?'+':'')+label:''}</div></div>
+        <span style="font-size:10px;color:var(--sub);width:30px;flex-shrink:0">${d.count}件</span></div>`;
+    }).join('');
+  };
   // Lot chart
   const lotChart=Object.keys(byLot).length?`<div class="card"><div class="card-title">🎯 ロット別 勝率</div>
     ${Object.entries(byLot).sort((a,b)=>a[0].localeCompare(b[0])).map(([lot,d])=>{
@@ -1265,7 +1396,7 @@ function renderStats() {
     ${lotChart}
     <div class="card"><div class="card-title">通貨ペア別 損益（円）</div><div class="bar-chart">${barChart(byPair,maxPair,'90px')}</div></div>
     <div class="card"><div class="card-title">時間帯別 損益（円）</div><div class="bar-chart">${barChart(bySess,maxSess,'110px')}</div></div>
-    <div class="card"><div class="card-title">感情別 損益（円）</div><div class="bar-chart">${barChart(byEmo,maxEmo,'130px')}</div></div>
+    <div class="card"><div class="card-title">曜日別 損益（円）</div><div class="bar-chart">${barChart(byWeekday,maxWeekday,'40px',['月','火','水','木','金','土','日'])}</div></div>
   `;
 }
 
@@ -1286,7 +1417,7 @@ function renderWeakness() {
     if(e&&ex&&s&&!isNaN(e)&&!isNaN(ex)&&!isNaN(s)&&Math.abs(e-ex)<Math.abs(e-s)*0.5)cs.push('早すぎる損切り');
     if(t.session==='重複時間')cs.push('重複時間帯リスク');
     if(!t.entryReason||t.entryReason.length<10)cs.push('根拠の言語化不足');
-    if(!t.envAnalysis||t.envAnalysis==='MT4インポート'||t.envAnalysis.length<5)cs.push('環境認識が不明確');
+    if(!t.envAnalysis||t.envAnalysis.length<5)cs.push('環境認識が不明確');
     if(!cs.length)cs.push('相場環境ミス');
     cs.forEach(c=>{if(!causes[c])causes[c]={count:0};causes[c].count++;});
   });
