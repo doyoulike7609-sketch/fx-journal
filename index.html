@@ -433,6 +433,12 @@
   </div>
 </div>
 
+<!-- スクリーンショットのフルサイズ表示用モーダル -->
+<div class="modal-overlay" id="image-viewer-modal" onclick="closeImageViewer()" style="background:#000c;align-items:center;justify-content:center;padding:16px">
+  <img id="image-viewer-img" src="" style="max-width:100%;max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5)" onclick="event.stopPropagation()">
+  <button onclick="closeImageViewer()" style="position:absolute;top:16px;right:16px;width:36px;height:36px;border-radius:50%;background:#161B22;border:1px solid var(--border2);color:var(--text);font-size:18px;display:flex;align-items:center;justify-content:center">✕</button>
+</div>
+
 <!-- GS設定モーダル -->
 <div class="modal-overlay" id="gs-modal" onclick="if(event.target===this)closeGsModal()">
   <div class="modal" style="border-radius:12px;max-width:500px;margin:auto">
@@ -581,7 +587,8 @@ function renderScreenshotPreview() {
   const wrap = document.getElementById('ss-preview-wrap');
   const removeBtn = document.getElementById('f-ss-remove');
   if(ssPreview) {
-    wrap.innerHTML = `<img src="${ssPreview}" style="max-width:100%;max-height:160px;border-radius:6px">`;
+    wrap.innerHTML = `<img src="${ssPreview}" style="max-width:100%;max-height:160px;border-radius:6px;cursor:zoom-in" onclick="event.stopPropagation();openImageViewer(ssPreview)">
+      <div style="font-size:10px;color:var(--sub);margin-top:4px">🔍 タップで拡大表示</div>`;
     removeBtn.style.display = 'inline-block';
   } else {
     wrap.innerHTML = '<span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>';
@@ -604,11 +611,24 @@ function removeEditScreenshot() {
   renderEditScreenshotPreview();
 }
 
+// ===== スクリーンショットのフルサイズ表示 =====
+function openImageViewer(url) {
+  if(!url) return;
+  document.getElementById('image-viewer-img').src = url;
+  document.getElementById('image-viewer-modal').classList.add('open');
+}
+function closeImageViewer() {
+  document.getElementById('image-viewer-modal').classList.remove('open');
+  document.getElementById('image-viewer-img').src = '';
+}
+
 function renderEditScreenshotPreview() {
   const wrap = document.getElementById('e-ss-preview-wrap');
   const removeBtn = document.getElementById('e-ss-remove');
   if(editSsPreview) {
-    wrap.innerHTML = `<img src="${editSsPreview}" style="max-width:100%;max-height:160px;border-radius:6px">`;
+    // Base64データURLは非常に長くなることがあるため、onclick属性に直接埋め込まずグローバル変数経由で渡す
+    wrap.innerHTML = `<img src="${editSsPreview}" style="max-width:100%;max-height:160px;border-radius:6px;cursor:zoom-in" onclick="event.stopPropagation();openImageViewer(editSsPreview)">
+      <div style="font-size:10px;color:var(--sub);margin-top:4px">🔍 タップで拡大表示</div>`;
     removeBtn.style.display = 'inline-block';
   } else {
     wrap.innerHTML = '<span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>';
@@ -918,7 +938,7 @@ function renderHistory() {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <span style="font-weight:700;font-size:13px">${t.pair}</span>
           <span class="tag" style="background:${t.direction==='BUY'?'#3FB95022':'#F8514922'};color:${t.direction==='BUY'?'var(--green)':'var(--red)'};border:1px solid ${t.direction==='BUY'?'#3FB95044':'#F8514944'}">${t.direction}</span>
-          <span style="font-size:11px;color:var(--sub)">${t.date}</span>
+          <span style="font-size:11px;color:var(--sub)">${t.date}${t.entryTime?' '+t.entryTime:''}</span>
           ${t.fromMT4?'<span class="tag" style="background:#F0B42922;color:var(--yellow);border:1px solid #F0B42944">MT4</span>':''}
         </div>
         <div style="margin-top:2px;font-size:11px;color:var(--sub)">${(t.session||'').split('(')[0]} ｜ ${t.emotion||''}</div>
@@ -1083,6 +1103,9 @@ function parseHTML(html) {
     const openTimeStr = cells[1]||'';
     const dm = openTimeStr.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
     const date = dm?`${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}`:new Date().toISOString().slice(0,10);
+    // エントリー時刻（HH:MM）を抽出。MT4のサーバー時刻のまま保存し、表示時にそのまま使う。
+    const tm = openTimeStr.match(/(\d{1,2}):(\d{2})/);
+    const entryTime = tm ? `${String(tm[1]).padStart(2,'0')}:${tm[2]}` : '';
     const mappedPair = PAIR_MAP[sym]||sym||'その他';
     const isBuy = type==='buy';
     const lotNum = parseFloat(lot)||0;
@@ -1094,7 +1117,7 @@ function parseHTML(html) {
       pipsNum = parseFloat((diff/pipSize).toFixed(1));
     }
     importBuffer.push({
-      id:Date.now()+Math.random(), date, pair:mappedPair,
+      id:Date.now()+Math.random(), date, entryTime, pair:mappedPair,
       direction:isBuy?'BUY':'SELL',
       pipsNum, amountNum:profit,
       entryPrice:openPrice>0?String(openPrice):'', exitPrice:closePrice>0?String(closePrice):'',
@@ -1133,6 +1156,9 @@ function parseCSV(text) {
     const profit=parseFloat((cols[12]||cols[11]||'0').replace(/[^0-9.\-]/g,''))||0;
     const dm=(cols[1]||'').match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
     const date=dm?`${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}`:new Date().toISOString().slice(0,10);
+    // エントリー時刻（HH:MM）を抽出
+    const tmC=(cols[1]||'').match(/(\d{1,2}):(\d{2})/);
+    const entryTimeC = tmC ? `${String(tmC[1]).padStart(2,'0')}:${tmC[2]}` : '';
     const mappedPairC = PAIR_MAP[sym]||sym||'その他';
     const isBuyC = type==='buy'||type==='0';
     const openP = parseFloat(cols[5])||0;
@@ -1146,7 +1172,7 @@ function parseCSV(text) {
       pipsNumC = parseFloat((diffC/pipSizeC).toFixed(1));
     }
     importBuffer.push({
-      id:Date.now()+Math.random(), date, pair:mappedPairC,
+      id:Date.now()+Math.random(), date, entryTime:entryTimeC, pair:mappedPairC,
       direction:isBuyC?'BUY':'SELL',
       pipsNum:pipsNumC, amountNum:profit,
       entryPrice:cols[5]||'', exitPrice:cols[9]||'',
@@ -1243,7 +1269,7 @@ function renderTradeDetail(t) {
   const bodyEl = document.getElementById('detail-modal-body');
   const won = t.pipsNum!==0 ? t.pipsNum>0 : t.amountNum>0;
 
-  titleEl.innerHTML = `${t.pair} &nbsp;<span class="tag" style="background:${t.direction==='BUY'?'#3FB95022':'#F8514922'};color:${t.direction==='BUY'?'var(--green)':'var(--red)'};border:1px solid ${t.direction==='BUY'?'#3FB95044':'#F8514944'}">${t.direction}</span>&nbsp;<span style="color:var(--sub);font-size:11px;font-weight:400">${t.date}</span>`;
+  titleEl.innerHTML = `${t.pair} &nbsp;<span class="tag" style="background:${t.direction==='BUY'?'#3FB95022':'#F8514922'};color:${t.direction==='BUY'?'var(--green)':'var(--red)'};border:1px solid ${t.direction==='BUY'?'#3FB95044':'#F8514944'}">${t.direction}</span>&nbsp;<span style="color:var(--sub);font-size:11px;font-weight:400">${t.date}${t.entryTime?' '+t.entryTime:''}</span>`;
 
   const ssUrl = t.ssDriveUrl || t.ssPreview;
 
@@ -1263,8 +1289,8 @@ function renderTradeDetail(t) {
       ${t.amountNum?`<span style="font-family:var(--mono);font-size:13px;color:${t.amountNum>=0?'var(--green)':'var(--red)'}">${t.amountNum>=0?'+':''}${t.amountNum.toLocaleString()}円</span>`:''}
     </div>`:''}
     ${ssUrl?`<div style="margin-bottom:14px">
-      <div style="font-size:12px;color:var(--sub);margin-bottom:6px">📸 トレード時のチャート</div>
-      <img src="${ssUrl}" style="width:100%;border-radius:8px;border:1px solid var(--border)" onerror="this.parentElement.innerHTML+='<div style=\\'color:var(--sub);font-size:12px;padding:10px;text-align:center\\'>⚠️ 画像を読み込めませんでした</div>'">
+      <div style="font-size:12px;color:var(--sub);margin-bottom:6px">📸 トレード時のチャート　<span style="color:#30363D">🔍 タップで拡大</span></div>
+      <img src="${ssUrl}" style="width:100%;border-radius:8px;border:1px solid var(--border);cursor:zoom-in" onclick="openImageViewer('${ssUrl.replace(/'/g,"\\'")}')" onerror="this.parentElement.innerHTML+='<div style=\\'color:var(--sub);font-size:12px;padding:10px;text-align:center\\'>⚠️ 画像を読み込めませんでした</div>'">
     </div>`:`<div style="margin-bottom:14px;padding:20px;background:#0D1117;border:1px dashed var(--border2);border-radius:8px;text-align:center;color:var(--sub);font-size:12px">📎 このトレードにはスクリーンショットがありません<br>「✏️ 編集」から追加できます</div>`}
     ${priceInfo}
     ${t.envAnalysis?`<div style="margin-bottom:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--blue2);font-weight:600">🌐 環境認識：</span><br>${t.envAnalysis}</div>`:''}
@@ -1661,8 +1687,8 @@ async function syncToGS(showAlert=true) {
     // Clear sheet
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}:clear`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
     // Write all（スクリーンショットはBase64ではなくDriveのURLだけを保存する）
-    const headers=[['ID','日付','通貨ペア','方向','時間帯','ロット','エントリー価格','決済価格','SL','TP','損益(pips)','損益(円)','感情','環境認識','エントリー根拠','懸念点','メモ','MT4','スクリーンショットURL']];
-    const rows=trades.map(t=>[String(t.id),t.date,t.pair,t.direction,t.session||'',t.lot||'',t.entryPrice||'',t.exitPrice||'',t.sl||'',t.tp||'',t.pipsNum||'',t.amountNum||'',t.emotion||'',t.envAnalysis||'',t.entryReason||'',t.concerns||'',t.notes||'',t.fromMT4?'MT4':'',t.ssDriveUrl||'']);
+    const headers=[['ID','日付','エントリー時刻','通貨ペア','方向','時間帯','ロット','エントリー価格','決済価格','SL','TP','損益(pips)','損益(円)','感情','環境認識','エントリー根拠','懸念点','メモ','MT4','スクリーンショットURL']];
+    const rows=trades.map(t=>[String(t.id),t.date,t.entryTime||'',t.pair,t.direction,t.session||'',t.lot||'',t.entryPrice||'',t.exitPrice||'',t.sl||'',t.tp||'',t.pipsNum||'',t.amountNum||'',t.emotion||'',t.envAnalysis||'',t.entryReason||'',t.concerns||'',t.notes||'',t.fromMT4?'MT4':'',t.ssDriveUrl||'']);
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(SHEET_NAME+'!A1')}:append?valueInputOption=RAW`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[...headers,...rows]})});
 
     // localStorageにもssDriveUrlを保存し直す（次回ロード時に再アップロードしないため）
