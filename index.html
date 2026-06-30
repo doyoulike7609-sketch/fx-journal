@@ -261,6 +261,7 @@
         <span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>
       </div>
       <input type="file" id="f-ss" accept="image/*" style="display:none" onchange="handleScreenshot(this)">
+      <button type="button" id="f-ss-remove" onclick="removeScreenshot()" style="display:none;margin-top:6px;padding:5px 10px;background:none;border:1px solid var(--border2);border-radius:6px;color:var(--sub);font-size:11px">🗑️ 画像を削除</button>
     </div>
 
     <button class="btn-full" id="submit-btn" onclick="submitTrade()">💾 トレードを記録する</button>
@@ -547,10 +548,27 @@ function handleScreenshot(input) {
   const reader = new FileReader();
   reader.onload = e => {
     ssPreview = e.target.result;
-    const wrap = document.getElementById('ss-preview-wrap');
-    wrap.innerHTML = `<img src="${ssPreview}" style="max-width:100%;max-height:160px;border-radius:6px">`;
+    renderScreenshotPreview();
   };
   reader.readAsDataURL(file);
+}
+
+function removeScreenshot() {
+  ssPreview = null;
+  document.getElementById('f-ss').value = '';
+  renderScreenshotPreview();
+}
+
+function renderScreenshotPreview() {
+  const wrap = document.getElementById('ss-preview-wrap');
+  const removeBtn = document.getElementById('f-ss-remove');
+  if(ssPreview) {
+    wrap.innerHTML = `<img src="${ssPreview}" style="max-width:100%;max-height:160px;border-radius:6px">`;
+    removeBtn.style.display = 'inline-block';
+  } else {
+    wrap.innerHTML = '<span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>';
+    removeBtn.style.display = 'none';
+  }
 }
 
 function handleEditScreenshot(input) {
@@ -789,12 +807,12 @@ function submitTrade() {
   document.getElementById('f-concerns').value='';
   document.getElementById('f-notes').value='';
   document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('ss-preview-wrap').innerHTML='<span style="color:var(--sub);font-size:13px">📎 タップして画像をアップロード</span>';
+  ssPreview=null;
+  renderScreenshotPreview();
   ['f-env','f-reason','f-concerns'].forEach(id=>{
     const s=document.getElementById('mic-status-'+id);
     if(s){s.textContent='';s.className='mic-status';}
   });
-  ssPreview=null;
   const btn=document.getElementById('submit-btn');
   btn.textContent='✅ 保存しました！'; btn.style.background='var(--green)';
   setTimeout(()=>{btn.textContent='💾 トレードを記録する';btn.style.background='';},2000);
