@@ -927,12 +927,20 @@ function renderHistory() {
     return;
   }
 
+  // 新しい順（日付＋エントリー時刻）に並べ替え。記録・取込の挿入順に依存しないよう明示的にソートする。
+  const sorted = [...filtered].sort((a,b)=>{
+    const da = new Date(`${a.date}T${a.entryTime||'00:00'}`);
+    const db = new Date(`${b.date}T${b.entryTime||'00:00'}`);
+    if(db-da !== 0) return db-da; // 日時が違えば新しい方が先
+    return (b.id||0)-(a.id||0); // 同日同時刻ならID（記録した順）で新しい方を先に
+  });
+
   // ページネーション計算
-  const totalPages = Math.max(1, Math.ceil(filtered.length / HISTORY_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / HISTORY_PAGE_SIZE));
   if(historyPage > totalPages) historyPage = totalPages;
   if(historyPage < 1) historyPage = 1;
   const startIdx = (historyPage-1) * HISTORY_PAGE_SIZE;
-  const pageTrades = filtered.slice(startIdx, startIdx + HISTORY_PAGE_SIZE);
+  const pageTrades = sorted.slice(startIdx, startIdx + HISTORY_PAGE_SIZE);
 
   el.innerHTML = pageTrades.map(t=>{
     const isPos=(t.pipsNum||t.amountNum)>=0;
@@ -971,10 +979,10 @@ function renderHistory() {
     pagEl.style.display='none';
   } else {
     pagEl.style.display='flex';
-    const rangeStart = startIdx+1, rangeEnd = Math.min(startIdx+HISTORY_PAGE_SIZE, filtered.length);
+    const rangeStart = startIdx+1, rangeEnd = Math.min(startIdx+HISTORY_PAGE_SIZE, sorted.length);
     pagEl.innerHTML = `
       <button class="period-btn" style="padding:7px 14px" onclick="goToHistoryPage(${historyPage-1})" ${historyPage<=1?'disabled':''}>← 前へ</button>
-      <span style="font-size:12px;color:var(--sub);white-space:nowrap">${rangeStart}-${rangeEnd}件 / 全${filtered.length}件（${historyPage}/${totalPages}ページ）</span>
+      <span style="font-size:12px;color:var(--sub);white-space:nowrap">${rangeStart}-${rangeEnd}件 / 全${sorted.length}件（${historyPage}/${totalPages}ページ）</span>
       <button class="period-btn" style="padding:7px 14px" onclick="goToHistoryPage(${historyPage+1})" ${historyPage>=totalPages?'disabled':''}>次へ →</button>
     `;
   }
