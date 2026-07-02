@@ -251,17 +251,35 @@
     </div>
 
     <div class="card">
-      <div class="card-title">心理・メモ</div>
+      <div class="card-title">🧠 心理・メモ <span style="color:var(--sub);font-weight:400;font-size:10px;margin-left:6px">🎤ボタンで音声入力 → AIが整形＋感情を自動判定</span></div>
+      <div style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+          <span class="env-tag" style="background:#D2A8FF22;color:var(--purple)">心理・きっかけ</span>
+          <span style="font-size:11px;color:var(--sub)">今の気持ち・なぜ入ったか・頭の中の声</span>
+        </div>
+        <div style="position:relative">
+          <textarea id="f-psych" placeholder="例：さっきの負けを取り返したかった。チャートを見ていたら急に上がり始めて乗り遅れる気がした。本当はまだ迷っていた..." style="padding-right:44px;min-height:80px"></textarea>
+          <button type="button" class="mic-btn" id="mic-f-psych" onclick="toggleMic('f-psych','#D2A8FF')" style="position:absolute;right:8px;top:8px">🎤</button>
+        </div>
+        <div class="mic-status" id="mic-status-f-psych"></div>
+      </div>
       <div class="field" style="margin-bottom:10px">
-        <div class="label">感情</div>
+        <div class="label">感情 <span style="color:var(--sub);font-size:10px;font-weight:400">（音声入力後にAIが自動選択）</span></div>
         <select id="f-emotion">
           <option>冷静・集中</option><option>少し焦り</option><option>FOMO（乗り遅れ恐怖）</option>
           <option>過信</option><option>恐怖・躊躇</option><option>報復トレード衝動</option><option>ニュートラル</option>
         </select>
       </div>
-      <div class="field" style="margin-bottom:10px">
-        <div class="label">振り返りメモ</div>
-        <textarea id="f-notes" placeholder="良かった点・反省点..."></textarea>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+          <span class="env-tag" style="background:#8B949E22;color:var(--sub2)">振り返りメモ</span>
+          <span style="font-size:11px;color:var(--sub)">良かった点・反省点・次への改善</span>
+        </div>
+        <div style="position:relative">
+          <textarea id="f-notes" placeholder="良かった点・反省点..." style="padding-right:44px"></textarea>
+          <button type="button" class="mic-btn" id="mic-f-notes" onclick="toggleMic('f-notes','#8B949E')" style="position:absolute;right:8px;top:8px">🎤</button>
+        </div>
+        <div class="mic-status" id="mic-status-f-notes"></div>
       </div>
       <div class="label">スクリーンショット</div>
       <div class="dropzone" onclick="document.getElementById('f-ss').click()" id="ss-preview-wrap" style="margin-top:5px">
@@ -401,9 +419,23 @@
       <div style="flex:1"><div class="label">損益（pips）</div><input type="number" id="e-pips" style="margin-top:4px"></div>
       <div style="flex:1"><div class="label">損益（円）</div><input type="number" id="e-amount" style="margin-top:4px"></div>
     </div>
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+        <span class="env-tag" style="background:#D2A8FF22;color:var(--purple)">心理・きっかけ</span>
+      </div>
+      <div style="position:relative">
+        <textarea id="e-psych" placeholder="今の気持ち・なぜ入ったか・頭の中の声" style="min-height:56px;padding-right:44px"></textarea>
+        <button type="button" class="mic-btn" id="mic-e-psych" onclick="toggleMic('e-psych','#D2A8FF')" style="position:absolute;right:8px;top:8px">🎤</button>
+      </div>
+      <div class="mic-status" id="mic-status-e-psych"></div>
+    </div>
     <div style="margin-bottom:16px">
       <div class="label">振り返りメモ</div>
-      <textarea id="e-notes" placeholder="良かった点・反省点..." style="margin-top:4px;min-height:56px"></textarea>
+      <div style="position:relative;margin-top:4px">
+        <textarea id="e-notes" placeholder="良かった点・反省点..." style="min-height:56px;padding-right:44px"></textarea>
+        <button type="button" class="mic-btn" id="mic-e-notes" onclick="toggleMic('e-notes','#8B949E')" style="position:absolute;right:8px;top:8px">🎤</button>
+      </div>
+      <div class="mic-status" id="mic-status-e-notes"></div>
     </div>
     <div style="margin-bottom:16px">
       <div class="label">スクリーンショット</div>
@@ -663,10 +695,15 @@ const MIC_PROMPTS = {
   'f-env': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「環境認識（上位足の状況・トレンド方向・ダウ理論・ライン分析など）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語（ダウ理論、水平線、トレンドライン、MA、フィボナッチ、チャートパターン、NEVなど）はそのまま使い、フィラー語（えーと、あのー等）や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
   'f-reason': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「エントリー根拠（プライスアクション・テクニカルの判断）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語はそのまま使い、フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
   'f-concerns': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「懸念点（エントリー前に感じたリスクや迷い）」のメモです。自然な日本語の記録文（1〜2文）に整理してください。フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
-  // 履歴編集モーダル用（記録フォームと同じ整形ルール）
+  // 心理・きっかけ欄：整形＋感情自動判定（特殊処理：stopMic内でAI判定後に感情セレクトも更新する）
+  'f-psych': '【特殊処理】',
+  'f-notes': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「振り返りメモ（良かった点・反省点・次への改善）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
+  // 履歴編集モーダル用
   'e-env': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「環境認識（上位足の状況・トレンド方向・ダウ理論・ライン分析など）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語（ダウ理論、水平線、トレンドライン、MA、フィボナッチ、チャートパターン、NEVなど）はそのまま使い、フィラー語（えーと、あのー等）や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
   'e-reason': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「エントリー根拠（プライスアクション・テクニカルの判断）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。専門用語はそのまま使い、フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
   'e-concerns': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「懸念点（エントリー前に感じたリスクや迷い）」のメモです。自然な日本語の記録文（1〜2文）に整理してください。フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
+  'e-psych': '【特殊処理】', // f-psychと同じロジックで処理される（stopMic内で分岐）
+  'e-notes': 'あなたはFXトレード記録アシスタントです。以下はトレーダーが音声で話した「振り返りメモ（良かった点・反省点・次への改善）」のメモです。自然な日本語の記録文（1〜3文）に整理してください。フィラー語や言い淀みは除去してください。整理した文章だけを返し、前置きや説明は不要です。',
 };
 
 function getSpeechRecognition() {
@@ -773,6 +810,67 @@ async function stopMic(fieldId) {
   statusEl.textContent = '✨ AIが文章を整理しています...';
 
   try {
+    // f-psych/e-psychは特殊処理：整形＋感情判定を同時に行う
+    if(fieldId === 'f-psych' || fieldId === 'e-psych') {
+      const emotionSelectId = fieldId === 'f-psych' ? 'f-emotion' : 'e-emotion';
+      const EMOTIONS = ['冷静・集中','少し焦り','FOMO（乗り遅れ恐怖）','過信','恐怖・躊躇','報復トレード衝動','ニュートラル'];
+      const psychPrompt = `あなたはFXトレーダーの心理分析アシスタントです。以下はトレーダーが音声で話した「今の気持ち・トレードのきっかけ・頭の中の声」のメモです。
+
+2つのことを行ってください：
+1. メモを自然な日本語の記録文（1〜3文）に整理する。フィラー語・言い淀みは除去。本人の本音や心理状態が伝わるよう、心の動きを具体的な言葉で表現する。
+2. 以下の感情カテゴリのうち、最も当てはまる1つを選ぶ：
+   - 冷静・集中
+   - 少し焦り
+   - FOMO（乗り遅れ恐怖）
+   - 過信
+   - 恐怖・躊躇
+   - 報復トレード衝動
+   - ニュートラル
+
+必ず以下のJSON形式だけで返してください（前置きや説明は不要）：
+{"text":"整形した記録文","emotion":"選んだ感情カテゴリ"}`;
+      const res = await fetch('/.netlify/functions/claude-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 400,
+          messages: [{ role: 'user', content: `${psychPrompt}\n\n音声メモ:「${transcript}」` }]
+        })
+      });
+      const raw = await res.text();
+      if(!res.ok) throw new Error(`HTTP ${res.status}: ${raw.slice(0,150)}`);
+      const data = JSON.parse(raw);
+      const resultText = Array.isArray(data.content)
+        ? data.content.filter(c=>c.type==='text').map(c=>c.text||'').join('').trim()
+        : '';
+      if(!resultText) throw new Error('整形結果が空でした');
+      let parsed;
+      try {
+        const cleaned = resultText.replace(/```json|```/g,'').trim();
+        parsed = JSON.parse(cleaned);
+      } catch { throw new Error('AIの返答をJSONとして解析できませんでした'); }
+      // テキストをフィールドにセット（fieldIdを使って正しい欄に入れる）
+      const textarea = document.getElementById(fieldId);
+      const existing = textarea.value.trim();
+      textarea.value = existing ? existing + '\n' + (parsed.text||resultText) : (parsed.text||resultText);
+      // 感情を自動選択（f-emotionまたはe-emotionへ）
+      if(parsed.emotion && EMOTIONS.includes(parsed.emotion)) {
+        const emotionSel = document.getElementById(emotionSelectId);
+        if(emotionSel) {
+          emotionSel.value = parsed.emotion;
+          statusEl.className = 'mic-status success';
+          statusEl.textContent = `✅ 整形完了 / 感情：「${parsed.emotion}」を自動選択しました`;
+        }
+      } else {
+        statusEl.className = 'mic-status success';
+        statusEl.textContent = '✅ 整形完了';
+      }
+      setTimeout(() => { if(statusEl.className==='mic-status success'){ statusEl.textContent=''; statusEl.className='mic-status'; } }, 4000);
+      stopMicUI(fieldId);
+      return;
+    }
+
     const systemPrompt = MIC_PROMPTS[fieldId] || 'メモを自然な日本語の記録文に整理してください。';
     const res = await fetch('/.netlify/functions/claude-proxy', {
       method: 'POST',
@@ -833,6 +931,7 @@ function submitTrade() {
     entryReason: document.getElementById('f-reason').value,
     concerns: document.getElementById('f-concerns').value,
     emotion: document.getElementById('f-emotion').value,
+    psych: document.getElementById('f-psych').value,
     notes: document.getElementById('f-notes').value,
     ssPreview, ssDriveUrl: null,
     fromMT4: false,
@@ -851,12 +950,13 @@ function submitTrade() {
   document.getElementById('f-reason').value='';
   document.getElementById('f-concerns').value='';
   document.getElementById('f-notes').value='';
+  document.getElementById('f-psych').value='';
   document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('f-time').value='';
-  const hadScreenshot = !!ssPreview; // リセット前に画像有無を記録しておく
+  const hadScreenshot = !!ssPreview;
   ssPreview=null;
   renderScreenshotPreview();
-  ['f-env','f-reason','f-concerns'].forEach(id=>{
+  ['f-env','f-reason','f-concerns','f-psych','f-notes'].forEach(id=>{
     const s=document.getElementById('mic-status-'+id);
     if(s){s.textContent='';s.className='mic-status';}
   });
@@ -1003,6 +1103,7 @@ function openEditModal(id) {
   document.getElementById('e-pips').value = t.pips||'';
   document.getElementById('e-amount').value = t.amount||'';
   document.getElementById('e-notes').value = t.notes||'';
+  document.getElementById('e-psych').value = t.psych||'';
   editSsPreview = t.ssPreview || t.ssDriveUrl || null;
   renderEditScreenshotPreview();
   ['e-env','e-reason','e-concerns'].forEach(id=>{
@@ -1028,6 +1129,7 @@ function saveEdit() {
   t.pipsNum = parseFloat(t.pips)||t.pipsNum||0;
   t.amountNum = parseFloat(t.amount)||t.amountNum||0;
   t.notes = document.getElementById('e-notes').value;
+  t.psych = document.getElementById('e-psych').value;
   // editSsPreviewの中身がBase64（新規アップロード）かDrive URL（既存）かで保存先を振り分ける
   const hasNewScreenshot = editSsPreview && editSsPreview.startsWith('data:');
   if(hasNewScreenshot) {
@@ -1313,7 +1415,8 @@ function renderTradeDetail(t) {
     ${t.envAnalysis?`<div style="margin-bottom:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--blue2);font-weight:600">🌐 環境認識：</span><br>${t.envAnalysis}</div>`:''}
     ${t.entryReason?`<div style="margin-bottom:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--green);font-weight:600">📝 エントリー根拠：</span><br>${t.entryReason}</div>`:''}
     ${t.concerns?`<div style="margin-bottom:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--yellow);font-weight:600">⚠️ 懸念点：</span><br>${t.concerns}</div>`:''}
-    ${t.notes?`<div style="margin-bottom:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--purple);font-weight:600">💭 振り返りメモ：</span><br>${t.notes}</div>`:''}
+    ${t.psych?`<div style="margin-bottom:6px;padding:9px 12px;background:#D2A8FF11;border-radius:6px;border:1px solid #D2A8FF33;font-size:12px;color:var(--sub);line-height:1.6"><span style="color:var(--purple);font-weight:600">🧠 心理・きっかけ：</span><br>${t.psych}</div>`:''}
+    ${t.notes?`<div style="margin-bottom:6px;padding:9px 12px;background:#0D1117;border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--sub);line-height:1.6"><span style="color:#8B949E;font-weight:600">💭 振り返りメモ：</span><br>${t.notes}</div>`:''}
     <button class="btn btn-blue" style="width:100%;justify-content:center;margin-top:8px" onclick="closeDetailModal();openEditModal('${t.id}')">✏️ このトレードを編集する</button>
   `;
 }
@@ -1620,23 +1723,6 @@ function renderWeakness() {
   });
   chainInsights.sort((a,b)=>(b.riskyRate+b.nextLoseRate)-(a.riskyRate+a.nextLoseRate));
 
-  const top=Object.entries(causes).sort((a,b)=>b[1].count-a[1].count)[0];
-  const causesHTML=!losses.length?'<div style="color:var(--green);text-align:center;padding:10px">負けトレードがありません 🎉</div>':
-    Object.entries(causes).sort((a,b)=>b[1].count-a[1].count).map(([c,d])=>{
-      const pct=(d.count/losses.length*100).toFixed(0);const col=CC[c]||'var(--sub)';
-      return `<div style="background:#0D1117;border:1px solid ${col}33;border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span class="tag" style="background:${col}22;color:${col};border:1px solid ${col}44">${c}</span>
-          <span style="font-family:var(--mono);font-size:12px;color:${col};font-weight:700">${d.count}件（${pct}%）</span>
-        </div>
-        <div style="height:6px;background:#21262D;border-radius:3px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:${col};border-radius:3px"></div>
-        </div>
-      </div>`;
-    }).join('') + (top?`<div style="background:#1F6FEB11;border:1px solid #1F6FEB33;border-radius:8px;padding:10px 12px">
-      <div style="font-size:12px;color:var(--blue2);font-weight:600;margin-bottom:5px">🎯 最優先改善ポイント：${top[0]}</div>
-      <div style="font-size:12px;color:var(--sub);line-height:1.6">${ADVICE[top[0]]||'記録を増やして分析精度を上げましょう。'}</div>
-    </div>`:'');
   // 時間帯別バー表示用
   const sessionRows=SESSIONS.map(sess=>{
     const d=sessionStats[sess];
@@ -1750,7 +1836,6 @@ function renderWeakness() {
     <div class="card"><div class="card-title">📊 通貨ペア × 方向（BUY/SELL）の傾向</div>${pairDirHTML||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'}</div>
     <div class="card"><div class="card-title">🔁 連敗後の挙動パターン</div>${streakCompareHTML}</div>
     <div class="card"><div class="card-title">🔗 感情の連鎖パターン</div>${chainHTML}</div>
-    <div class="card"><div class="card-title">⚠️ 負けパターン自動分類</div>${causesHTML}</div>
     <div class="card"><div class="card-title">🕐 時間帯別 勝率・損益</div>
       ${sessionRows||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'}
     </div>
