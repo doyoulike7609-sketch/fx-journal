@@ -515,13 +515,26 @@ const SHEET_NAME = 'トレード履歴';
 // スクリーンショットはImgBB（無料の画像ホスティングAPI）に保存し、URLだけをスプレッドシートに残す。
 // Google Driveはサービスアカウントの保存容量制限（storage quota）により断念し、よりシンプルなこちらに切り替えた。
 const IMGBB_API_KEY = '4fec620330d609b8154108cb9001e359';
-// 時間帯自動判定（JST基準）
-function detectSession(dateTimeStr) {
-  const m = (dateTimeStr||'').match(/(\d{1,2}):(\d{2})/);
+// MT4サーバー時刻→日本時間（JST）への変換。時差は業者ごとに異なるため定数化しておく（現在8時間固定）。
+const MT4_TO_JST_OFFSET_HOURS = 6;
+// MT4の日時文字列（例:"2026.07.02 15:30"）を受け取り、JSTに変換した{date, time}を返す。日付をまたぐ場合も正しく繰り上げ／繰り下げする。
+function convertMT4ToJST(dateTimeStr) {
+  const m = (dateTimeStr||'').match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})[^\d]+(\d{1,2}):(\d{2})/);
+  if(!m) return { date: '', time: '' };
+  const [, y, mo, d, h, mi] = m;
+  // UTCとして構築してからオフセットを足すことで、ローカルタイムゾーンの影響を受けずに正確に計算する
+  const utcMs = Date.UTC(parseInt(y), parseInt(mo)-1, parseInt(d), parseInt(h), parseInt(mi));
+  const jstMs = utcMs + MT4_TO_JST_OFFSET_HOURS*60*60*1000;
+  const jst = new Date(jstMs);
+  const date = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth()+1).padStart(2,'0')}-${String(jst.getUTCDate()).padStart(2,'0')}`;
+  const time = `${String(jst.getUTCHours()).padStart(2,'0')}:${String(jst.getUTCMinutes()).padStart(2,'0')}`;
+  return { date, time };
+}
+// 時間帯自動判定（JST基準）。渡す時刻は必ずJST変換済みのものを使うこと。
+function detectSession(jstTimeStr) {
+  const m = (jstTimeStr||'').match(/(\d{1,2}):(\d{2})/);
   if(!m) return '東京時間(0-9JST)';
   const h = parseInt(m[1]);
-  // MT4時間はサーバー時間（通常UTC+2/3）→ JST=+7/+8
-  // 簡易判定: MT4のサーバー時間をそのまま使って近似
   if(h>=0&&h<7) return '東京時間(0-9JST)';
   if(h>=7&&h<10) return '重複時間';
   if(h>=10&&h<17) return 'ロンドン時間(16-25JST)';
@@ -1220,11 +1233,10 @@ function parseHTML(html) {
     const tpPrice = parseFloat((cells[7]||'0').replace(/[, ]/g,''))||0;
     const lot = cells[3]||'0';
     const openTimeStr = cells[1]||'';
-    const dm = openTimeStr.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
-    const date = dm?`${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}`:new Date().toISOString().slice(0,10);
-    // エントリー時刻（HH:MM）を抽出。MT4のサーバー時刻のまま保存し、表示時にそのまま使う。
-    const tm = openTimeStr.match(/(\d{1,2}):(\d{2})/);
-    const entryTime = tm ? `${String(tm[1]).padStart(2,'0')}:${tm[2]}` : '';
+    // MT4サーバー時刻→日本時間（JST）に変換。日付をまたぐ場合も正しく処理される。
+    const jst = convertMT4ToJST(openTimeStr);
+    const date = jst.date || new Date().toISOString().slice(0,10);
+    const entryTime = jst.time || '';
     const mappedPair = PAIR_MAP[sym]||sym||'その他';
     const isBuy = type==='buy';
     const lotNum = parseFloat(lot)||0;
@@ -1242,7 +1254,7 @@ function parseHTML(html) {
       entryPrice:openPrice>0?String(openPrice):'', exitPrice:closePrice>0?String(closePrice):'',
       sl:slPrice>0?String(slPrice):'', tp:tpPrice>0?String(tpPrice):'',
       lot, lotNum, ticket:String(ticket),
-      session:detectSession(openTimeStr), emotion:'ニュートラル',
+      session:detectSession(entryTime), emotion:'ニュートラル',
       envAnalysis:'', entryReason:'', concerns:'',
       notes:'',
       pips:String(pipsNum), amount:String(profit), fromMT4:true
@@ -1273,11 +1285,10 @@ function parseCSV(text) {
     if(!['buy','sell','0','1'].includes(type)) continue;
     const sym=(cols[4]||'').trim().toUpperCase().replace(/[^A-Z]/g,'');
     const profit=parseFloat((cols[12]||cols[11]||'0').replace(/[^0-9.\-]/g,''))||0;
-    const dm=(cols[1]||'').match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
-    const date=dm?`${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}`:new Date().toISOString().slice(0,10);
-    // エントリー時刻（HH:MM）を抽出
-    const tmC=(cols[1]||'').match(/(\d{1,2}):(\d{2})/);
-    const entryTimeC = tmC ? `${String(tmC[1]).padStart(2,'0')}:${tmC[2]}` : '';
+    // MT4サーバー時刻→日本時間（JST）に変換
+    const jstC = convertMT4ToJST(cols[1]||'');
+    const date = jstC.date || new Date().toISOString().slice(0,10);
+    const entryTimeC = jstC.time || '';
     const mappedPairC = PAIR_MAP[sym]||sym||'その他';
     const isBuyC = type==='buy'||type==='0';
     const openP = parseFloat(cols[5])||0;
@@ -1297,7 +1308,7 @@ function parseCSV(text) {
       entryPrice:cols[5]||'', exitPrice:cols[9]||'',
       sl:cols[6]||'', tp:cols[7]||'',
       lot:cols[3]||'', lotNum:lotNumC, ticket:String(cols[0]),
-      session:detectSession(cols[1]), emotion:'ニュートラル',
+      session:detectSession(entryTimeC), emotion:'ニュートラル',
       envAnalysis:'', entryReason:'', concerns:'',
       notes:'', pips:String(pipsNumC), amount:String(profit), fromMT4:true
     });
