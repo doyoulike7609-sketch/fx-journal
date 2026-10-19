@@ -496,6 +496,12 @@
       <span style="color:var(--blue2)">📸 スクリーンショットは自動でクラウドに保存され、デバイスをまたいで表示されます。</span>
     </div>
     <div id="gs-current" style="display:none;margin-bottom:12px;padding:8px 12px;background:#3FB95011;border:1px solid #3FB95033;border-radius:6px;font-size:12px;color:var(--green)"></div>
+    <div style="margin-bottom:14px">
+      <label class="btn btn-blue" style="width:100%;justify-content:center;cursor:pointer;box-sizing:border-box">📄 JSONファイルを選んで自動入力
+        <input type="file" style="display:none" onchange="loadGsJsonFile(this)">
+      </label>
+      <div style="font-size:11px;color:var(--sub);margin-top:5px;text-align:center">または、下の2つの欄に直接貼り付けてください</div>
+    </div>
     <div style="margin-bottom:10px">
       <div class="label">client_email</div>
       <input id="gs-email" placeholder="xxx@xxx.iam.gserviceaccount.com" style="margin-top:4px;font-size:12px">
@@ -548,6 +554,10 @@ function detectSession(jstTimeStr) {
   if(h>=17&&h<20) return '重複時間';
   return 'NY時間(22-7JST)';
 }
+// 端末の現地日付（日本ならJST）を YYYY-MM-DD で返す。toISOString()はUTC基準のため、日本の0〜9時に前日になってしまう問題を避ける。
+function localDateStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 
 let trades = [];
 let gsSettings = null;
@@ -563,22 +573,69 @@ let historyPeriod = 'all';
 let historyPage = 1;
 const HISTORY_PAGE_SIZE = 10;
 
+// ===== 変更の追跡（複数端末で同期しても記録が消えないようにするための仕組み） =====
+// ・各トレードに updatedAt（最終更新時刻）を持たせ、同じトレードが複数端末で編集されたら新しい方を採用する
+// ・削除したトレードは deletedIds に「ID → 削除時刻」で記録し、他の端末にも削除を伝える
+const DELETED_KEY = 'fx-deleted-v1';
+let deletedIds = {};
+let lastSnapshot = new Map(); // 前回保存時点の各トレードの中身（変更検出用）
+
+function tradeSig(t) {
+  const { updatedAt, ssPreview, ...rest } = t;
+  return JSON.stringify(rest) + (ssPreview ? '|img' : '');
+}
+function takeSnapshot() {
+  lastSnapshot = new Map(trades.map(t => [String(t.id), tradeSig(t)]));
+}
+// 前回保存時からの変化を調べ、追加・編集されたトレードには更新時刻を、消えたトレードには削除記録を付ける
+function trackChanges() {
+  const now = Date.now();
+  const currentIds = new Set();
+  for (const t of trades) {
+    const id = String(t.id);
+    currentIds.add(id);
+    if (lastSnapshot.get(id) !== tradeSig(t)) t.updatedAt = now;
+  }
+  for (const id of lastSnapshot.keys()) {
+    if (!currentIds.has(id)) deletedIds[id] = now;
+  }
+  takeSnapshot();
+}
+function persistLocal() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades.map(t=>({...t,ssPreview:null})))); } catch{}
+  try { localStorage.setItem(DELETED_KEY, JSON.stringify(deletedIds)); } catch{}
+}
+
 // ===== INIT =====
 window.onload = () => {
   // Set today's date
-  document.getElementById('f-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('f-date').value = localDateStr();
   // Load data
   try { const d = localStorage.getItem(STORAGE_KEY); if(d) trades = JSON.parse(d); } catch{}
+  try { const del = localStorage.getItem(DELETED_KEY); if(del) deletedIds = JSON.parse(del) || {}; } catch{}
   try { const g = localStorage.getItem(GS_KEY); if(g) gsSettings = JSON.parse(g); } catch{}
+  takeSnapshot();
   updateAll();
   updateGsUI();
   // RRR live calculation
   ['f-entry','f-sl','f-tp'].forEach(id=>document.getElementById(id).addEventListener('input', updateRRR));
+  // 起動時に、他の端末で追加・編集された記録をスプレッドシートから取り込む
+  if(gsSettings) { lastAutoSyncAt = Date.now(); syncToGS(false); }
 };
+
+// ホーム画面アプリはバックグラウンドから復帰しても再読み込みされないため、画面に戻ってきた時にも同期する（1分に1回まで）
+let lastAutoSyncAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState !== 'visible' || !gsSettings) return;
+  if(Date.now() - lastAutoSyncAt < 60*1000) return;
+  lastAutoSyncAt = Date.now();
+  syncToGS(false);
+});
 
 // ===== SAVE =====
 function saveTrades(immediateSync=false) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades.map(t=>({...t,ssPreview:null})))); } catch{}
+  trackChanges();
+  persistLocal();
   updateAll();
   showSaveIndicator();
   if(gsSettings) {
@@ -971,7 +1028,7 @@ function submitTrade() {
   document.getElementById('f-concerns').value='';
   document.getElementById('f-notes').value='';
   document.getElementById('f-psych').value='';
-  document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('f-date').value=localDateStr();
   document.getElementById('f-time').value='';
   const hadScreenshot = !!ssPreview;
   ssPreview=null;
@@ -995,7 +1052,7 @@ function setHistoryPeriod(period) {
   customEl.style.display = period==='custom' ? 'flex' : 'none';
   if(period==='custom') {
     const fromEl=document.getElementById('history-period-from'), toEl=document.getElementById('history-period-to');
-    if(!toEl.value) toEl.value = new Date().toISOString().slice(0,10);
+    if(!toEl.value) toEl.value = localDateStr();
     if(!fromEl.value) toEl.value && (fromEl.value = toEl.value); // デフォルトは「その日だけ」
   }
   renderHistory();
@@ -1307,7 +1364,7 @@ function parseHTML(html) {
     const openTimeStr = cells[1]||'';
     // MT4サーバー時刻→日本時間（JST）に変換。日付をまたぐ場合も正しく処理される。
     const jst = convertMT4ToJST(openTimeStr);
-    const date = jst.date || new Date().toISOString().slice(0,10);
+    const date = jst.date || localDateStr();
     const entryTime = jst.time || '';
     const mappedPair = PAIR_MAP[sym]||sym||'その他';
     const isBuy = type==='buy';
@@ -1359,7 +1416,7 @@ function parseCSV(text) {
     const profit=parseFloat((cols[12]||cols[11]||'0').replace(/[^0-9.\-]/g,''))||0;
     // MT4サーバー時刻→日本時間（JST）に変換
     const jstC = convertMT4ToJST(cols[1]||'');
-    const date = jstC.date || new Date().toISOString().slice(0,10);
+    const date = jstC.date || localDateStr();
     const entryTimeC = jstC.time || '';
     const mappedPairC = PAIR_MAP[sym]||sym||'その他';
     const isBuyC = type==='buy'||type==='0';
@@ -1512,10 +1569,10 @@ function setStatsPeriod(period) {
   customEl.style.display = period==='custom' ? 'flex' : 'none';
   if(period==='custom') {
     const fromEl=document.getElementById('period-from'), toEl=document.getElementById('period-to');
-    if(!toEl.value) toEl.value = new Date().toISOString().slice(0,10);
+    if(!toEl.value) toEl.value = localDateStr();
     if(!fromEl.value) {
       const d=new Date(); d.setDate(d.getDate()-30);
-      fromEl.value = d.toISOString().slice(0,10);
+      fromEl.value = localDateStr(d);
     }
   }
   renderStats();
@@ -2009,6 +2066,7 @@ async function migrateScreenshotsToImgBB() {
     try {
       const url = await uploadScreenshotToImgBB(t.ssPreview, t.id);
       t.ssDriveUrl = url; // フィールド名はssDriveUrlのまま流用（ImgBBのURLが入る）
+      t.updatedAt = Date.now(); // 画像URLが付いたことを他の端末にも反映させる
       uploaded++;
     } catch(e) {
       failed++;
@@ -2019,8 +2077,143 @@ async function migrateScreenshotsToImgBB() {
   return { uploaded, failed, firstError };
 }
 
-async function syncToGS(showAlert=true) {
+// ===== Google スプレッドシート同期（合体型） =====
+// 同期のたびに「スプレッドシートの記録を読み込む → この端末の記録と合体 → 合体結果を書き戻す」を行う。
+// どの端末から同期しても、他の端末で付けた記録が消えないようにするため。
+const DELETED_SHEET_NAME = '削除済み';
+const SHEET_HEADERS = ['ID','日付','エントリー時刻','通貨ペア','方向','時間帯','ロット','エントリー価格','決済価格','SL','TP','損益(pips)','損益(円)','感情','心理メモ','環境認識','エントリー根拠','懸念点','振り返りメモ','MT4','スクリーンショットURL','最終更新','アプリ用データ'];
+const SHEETS_BASE = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+let syncInProgress = false;
+let syncQueued = false;
+
+async function gsFetch(token, url, options = {}) {
+  const res = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } });
+  const text = await res.text();
+  if(!res.ok) throw new Error(`スプレッドシート通信エラー(HTTP ${res.status}): ${text.slice(0,200)}`);
+  try { return text ? JSON.parse(text) : {}; } catch { return {}; }
+}
+
+function formatDateTime(ms) {
+  const d = new Date(ms);
+  return `${localDateStr(d)} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+// トレード1件 → スプレッドシートの1行。最後の「アプリ用データ」列に全項目をそのまま入れ、読み込み時に漏れなく復元できるようにする
+function tradeToRow(t) {
+  const { ssPreview, ...data } = t;
+  return [String(t.id), t.date||'', t.entryTime||'', t.pair||'', t.direction||'', t.session||'', t.lot||'', t.entryPrice||'', t.exitPrice||'', t.sl||'', t.tp||'', t.pipsNum||'', t.amountNum||'', t.emotion||'', t.psych||'', t.envAnalysis||'', t.entryReason||'', t.concerns||'', t.notes||'', t.fromMT4?'MT4':'', t.ssDriveUrl||'', t.updatedAt?formatDateTime(t.updatedAt):'', JSON.stringify(data)];
+}
+
+// スプレッドシートの1行 → トレード1件
+function rowToTrade(row, col) {
+  const get = name => { const i = col[name]; const v = (i==null) ? '' : row[i]; return v==null ? '' : String(v); };
+  // 2台が同時に同期して見出し行が重複した場合などは、その行を読み飛ばす（次の同期できれいに書き直される）
+  if(get('ID') === 'ID') return null;
+  const json = get('アプリ用データ');
+  if(json) {
+    try { const t = JSON.parse(json); if(t && t.id != null) return { ...t, ssPreview: null }; } catch {}
+  }
+  // 「アプリ用データ」列がない古い形式の行は、見出しを手がかりに復元する
+  const idStr = get('ID');
+  if(!idStr) return null;
+  const lot = get('ロット'), pips = get('損益(pips)'), amount = get('損益(円)');
+  return {
+    id: isNaN(Number(idStr)) ? idStr : Number(idStr),
+    date: get('日付'), entryTime: get('エントリー時刻'), pair: get('通貨ペア'), direction: get('方向'), session: get('時間帯'),
+    lot, lotNum: parseFloat(lot)||0, entryPrice: get('エントリー価格'), exitPrice: get('決済価格'), sl: get('SL'), tp: get('TP'),
+    pips, amount, pipsNum: parseFloat(pips)||0, amountNum: parseFloat(amount)||0,
+    emotion: get('感情'), psych: get('心理メモ'), envAnalysis: get('環境認識'), entryReason: get('エントリー根拠'), concerns: get('懸念点'),
+    notes: get('振り返りメモ') || get('メモ'), fromMT4: get('MT4')==='MT4', ssDriveUrl: get('スクリーンショットURL') || null, ssPreview: null,
+    updatedAt: 0,
+  };
+}
+
+// スプレッドシート上の記録と削除記録を読み込む（必要なシートがなければ作る）
+async function readRemote(token) {
+  const meta = await gsFetch(token, `${SHEETS_BASE}?fields=sheets.properties.title`);
+  const titles = (meta.sheets||[]).map(s => s.properties && s.properties.title);
+  const missing = [SHEET_NAME, DELETED_SHEET_NAME].filter(n => !titles.includes(n));
+  if(missing.length) {
+    await gsFetch(token, `${SHEETS_BASE}:batchUpdate`, { method:'POST', body: JSON.stringify({ requests: missing.map(title => ({ addSheet: { properties: { title } } })) }) });
+  }
+  const ranges = [SHEET_NAME, DELETED_SHEET_NAME].map(n => 'ranges=' + encodeURIComponent(`'${n}'`)).join('&');
+  const data = await gsFetch(token, `${SHEETS_BASE}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE`);
+  const [mainRange, delRange] = data.valueRanges || [];
+  const mainValues = (mainRange && mainRange.values) || [];
+  const remoteTrades = [];
+  if(mainValues.length) {
+    const col = {};
+    mainValues[0].forEach((h, i) => { col[String(h)] = i; });
+    for(const row of mainValues.slice(1)) {
+      const t = rowToTrade(row, col);
+      if(t) remoteTrades.push(t);
+    }
+  }
+  const remoteDeleted = {};
+  for(const row of ((delRange && delRange.values) || []).slice(1)) {
+    if(row[0] === undefined || row[0] === '' || String(row[0]) === 'ID') continue;
+    remoteDeleted[String(row[0])] = Number(row[1]) || 0;
+  }
+  return { trades: remoteTrades, deleted: remoteDeleted };
+}
+
+// この端末の記録とスプレッドシートの記録を1つにまとめる
+function mergeTrades(localTrades, localDeleted, remoteTrades, remoteDeleted) {
+  const deleted = { ...remoteDeleted };
+  for(const [id, ts] of Object.entries(localDeleted || {})) deleted[id] = Math.max(Number(ts)||0, Number(deleted[id])||0);
+
+  // 同じトレードが両方にあれば、最後に編集された方を採用する
+  const byId = new Map();
+  for(const r of remoteTrades) byId.set(String(r.id), r);
+  for(const l of localTrades) {
+    const id = String(l.id);
+    const r = byId.get(id);
+    if(!r || (l.updatedAt||0) >= (r.updatedAt||0)) {
+      byId.set(id, l);
+    } else {
+      // 他の端末の方が新しい。ただし、この端末からまだ送れていない画像があれば引き継ぐ
+      if(l.ssPreview && !l.ssDriveUrl && !r.ssDriveUrl) r.ssPreview = l.ssPreview;
+      byId.set(id, r);
+    }
+  }
+
+  // 削除されたトレードを取り除く（削除のあとに別の端末で編集されていれば、編集を優先して残す）
+  let result = [];
+  for(const [id, t] of byId) {
+    const d = deleted[id];
+    if(d && d >= (t.updatedAt||0)) continue;
+    if(d) delete deleted[id];
+    result.push(t);
+  }
+
+  // 同じMT4チケットを別々の端末で取り込んでいた場合は、先に取り込まれた方だけを残す
+  const byTicket = new Map();
+  const dropIds = new Set();
+  for(const t of result) {
+    if(!t.ticket) continue;
+    const key = String(t.ticket);
+    const prev = byTicket.get(key);
+    if(!prev) { byTicket.set(key, t); continue; }
+    const keep = Number(prev.id) <= Number(t.id) ? prev : t;
+    const drop = keep === prev ? t : prev;
+    byTicket.set(key, keep);
+    dropIds.add(String(drop.id));
+  }
+  if(dropIds.size) {
+    const now = Date.now();
+    for(const id of dropIds) deleted[id] = now;
+    result = result.filter(t => !dropIds.has(String(t.id)));
+  }
+
+  result.sort((a, b) => (Number(b.id)||0) - (Number(a.id)||0));
+  return { trades: result, deleted };
+}
+
+async function syncToGS(showAlert=true, opts={}) {
   if(!gsSettings) return;
+  // 同期中に再度呼ばれたら、終わったあとにもう一度だけ同期する
+  if(syncInProgress) { syncQueued = true; return; }
+  syncInProgress = true;
   updateGsBadge('syncing');
   try {
     const token=await getToken(gsSettings.clientEmail, gsSettings.privateKey);
@@ -2038,15 +2231,29 @@ async function syncToGS(showAlert=true) {
       // 画像アップロードに失敗してもスプレッドシート同期自体は続行する（が、エラーは後でユーザーに伝える）
     }
 
-    // Clear sheet
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}:clear`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
-    // Write all（スクリーンショットはBase64ではなくDriveのURLだけを保存する）
-    const headers=[['ID','日付','エントリー時刻','通貨ペア','方向','時間帯','ロット','エントリー価格','決済価格','SL','TP','損益(pips)','損益(円)','感情','環境認識','エントリー根拠','懸念点','メモ','MT4','スクリーンショットURL']];
-    const rows=trades.map(t=>[String(t.id),t.date,t.entryTime||'',t.pair,t.direction,t.session||'',t.lot||'',t.entryPrice||'',t.exitPrice||'',t.sl||'',t.tp||'',t.pipsNum||'',t.amountNum||'',t.emotion||'',t.envAnalysis||'',t.entryReason||'',t.concerns||'',t.notes||'',t.fromMT4?'MT4':'',t.ssDriveUrl||'']);
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(SHEET_NAME+'!A1')}:append?valueInputOption=RAW`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[...headers,...rows]})});
+    // ① スプレッドシートの記録を読み込む
+    const remote = await readRemote(token);
 
-    // localStorageにもssDriveUrlを保存し直す（次回ロード時に再アップロードしないため）
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades.map(t=>({...t,ssPreview:null})))); } catch{}
+    // 初回連携で「消して新しく始める」を選んだ場合：この端末にないスプレッドシート上の記録を削除扱いにする
+    if(opts.mode === 'replace') {
+      const localIds = new Set(trades.map(t => String(t.id)));
+      const now = Date.now();
+      for(const r of remote.trades) if(!localIds.has(String(r.id))) deletedIds[String(r.id)] = now;
+    }
+
+    // ② この端末の記録と合体する
+    const merged = mergeTrades(trades, deletedIds, remote.trades, remote.deleted);
+    trades = merged.trades;
+    deletedIds = merged.deleted;
+    persistLocal();
+    takeSnapshot();
+    updateAll();
+
+    // ③ 合体した結果をスプレッドシートに書き戻す（スクリーンショットはBase64ではなくURLだけを保存する）
+    const delRows = Object.entries(deletedIds).map(([id, ts]) => [String(id), Number(ts)||0, ts ? formatDateTime(Number(ts)) : '']);
+    await gsFetch(token, `${SHEETS_BASE}/values:batchClear`, { method:'POST', body: JSON.stringify({ ranges: [`'${SHEET_NAME}'`, `'${DELETED_SHEET_NAME}'`] }) });
+    await gsFetch(token, `${SHEETS_BASE}/values/${encodeURIComponent(`'${SHEET_NAME}'!A1`)}:append?valueInputOption=RAW`, { method:'POST', body: JSON.stringify({ values: [SHEET_HEADERS, ...trades.map(tradeToRow)] }) });
+    await gsFetch(token, `${SHEETS_BASE}/values/${encodeURIComponent(`'${DELETED_SHEET_NAME}'!A1`)}:append?valueInputOption=RAW`, { method:'POST', body: JSON.stringify({ values: [['ID','削除時刻(アプリ用)','削除日時'], ...delRows] }) });
 
     updateGsBadge('synced');
     if(failedCount > 0 || uploadErrorMsg) {
@@ -2062,15 +2269,19 @@ async function syncToGS(showAlert=true) {
         m.textContent = `⚠️ シートは同期しましたが、画像アップロードに失敗しました: ${uploadErrorMsg||'不明なエラー'}`;
       } else {
         m.style.color='var(--green)';
-        m.textContent = uploadedCount>0 ? `✅ 同期しました！（画像${uploadedCount}枚をクラウドに保存）` : '✅ 同期しました！';
+        m.textContent = `✅ 同期しました！（記録${trades.length}件${uploadedCount>0?`・画像${uploadedCount}枚をクラウドに保存`:''}）`;
       }
     }
     setTimeout(()=>updateGsBadge('idle'),3000);
   } catch(e) {
     updateGsBadge('error');
     showSyncErrorBanner(`⚠️ 同期エラー: ${e.message}`);
-    alert('同期エラー:\n'+e.message);
+    // 自動同期（起動時・保存時）の失敗はバナーだけにして、毎回ポップアップが出ないようにする
+    if(showAlert) alert('同期エラー:\n'+e.message);
     setTimeout(()=>updateGsBadge('idle'),2000);
+  } finally {
+    syncInProgress = false;
+    if(syncQueued) { syncQueued = false; setTimeout(()=>syncToGS(false), 500); }
   }
 }
 
@@ -2102,17 +2313,70 @@ function openGsModal() {
 }
 function closeGsModal() { document.getElementById('gs-modal').classList.remove('open'); }
 
+// サービスアカウントのJSONファイルを選ぶと、client_email と private_key を自動で入力する（iPhoneで長い鍵を貼り付ける手間を省く）
+function loadGsJsonFile(input) {
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const j = JSON.parse(reader.result);
+      if(!j.client_email || !j.private_key) throw new Error('client_email / private_key が見つかりません');
+      document.getElementById('gs-email').value = j.client_email;
+      document.getElementById('gs-key').value = j.private_key;
+      const m = document.getElementById('gs-msg');
+      m.style.display = 'block'; m.style.color = 'var(--green)';
+      m.textContent = '✅ JSONファイルから読み込みました。「保存して同期」を押してください';
+    } catch(e) {
+      alert('JSONファイルを読み込めませんでした: ' + e.message);
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
 async function saveGsSettings() {
-  const email=document.getElementById('gs-email').value.trim();
+  let email=document.getElementById('gs-email').value.trim();
   let pk=document.getElementById('gs-key').value.trim();
+  // JSONファイルの中身をまるごと貼り付けた場合にも対応する
+  if(pk.startsWith('{')) {
+    try { const j=JSON.parse(pk); if(j.private_key) pk=j.private_key; if(j.client_email && !email) email=j.client_email; } catch{}
+  }
   if(!email||!pk){alert('両方入力してください');return;}
   // Fix newlines in private key
   if(pk.includes('\\n')) pk=pk.replace(/\\n/g,'\n');
+
+  const msg = document.getElementById('gs-msg');
+  msg.style.display='block'; msg.style.color='var(--sub)'; msg.textContent='🔄 スプレッドシートを確認中…';
+  let mode = 'merge';
+  try {
+    const token = await getToken(email, pk);
+    // 初めてつなぐ時だけ、スプレッドシートに残っている記録をどうするか選んでもらう
+    if(!gsSettings) {
+      const remote = await readRemote(token);
+      const localIds = new Set(trades.map(t=>String(t.id)));
+      const onlyRemote = remote.trades.filter(t=>!localIds.has(String(t.id)));
+      if(onlyRemote.length) {
+        const load = confirm(`スプレッドシートに、この端末にない記録が${onlyRemote.length}件あります。\n\n［OK］この端末に読み込む（ほかの端末と記録をそろえる）\n［キャンセル］読み込まない（スプレッドシートの${onlyRemote.length}件を削除して、新しく始める）`);
+        if(!load) {
+          if(confirm(`スプレッドシートの${onlyRemote.length}件を削除して、新しく始めます。元に戻せません。よろしいですか？`)) {
+            mode = 'replace';
+          } else {
+            msg.style.color='var(--sub)'; msg.textContent='連携を中止しました（何も変更していません）';
+            return;
+          }
+        }
+      }
+    }
+  } catch(e) {
+    msg.style.color='var(--red)'; msg.textContent='❌ 接続できませんでした：'+e.message+'（client_email と private_key を確認してください）';
+    return;
+  }
   gsSettings={clientEmail:email, privateKey:pk};
   try { localStorage.setItem(GS_KEY, JSON.stringify(gsSettings)); } catch{}
   updateGsUI();
   closeGsModal();
-  await syncToGS(true);
+  await syncToGS(true, { mode });
 }
 
 async function syncNow() {
