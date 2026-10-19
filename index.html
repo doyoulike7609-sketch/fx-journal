@@ -339,7 +339,7 @@
     <div id="history-pagination" style="display:none;justify-content:center;align-items:center;gap:12px;margin-top:14px"></div>
   </div>
 
-  <!-- MT4取込タブ -->
+  <!-- MT4/MT5取込タブ -->
   <div class="tab-panel" id="panel-4">
     <div class="card">
       <div class="card-title">📥 MT4 CSVインポート</div>
@@ -355,6 +355,13 @@
       </div>
       <input type="file" id="csv-file" accept=".csv,.txt,.htm,.html" style="display:none" onchange="handleCSV(this)">
       <div id="import-msg" style="margin-top:10px;display:none"></div>
+    </div>
+    <div class="card" style="background:#8957E522;border:1px solid #8957E544">
+      <div class="card-title" style="color:#D2A8FF">📱 MT5（スマホアプリ版）をお使いの方へ</div>
+      <div style="font-size:12px;color:var(--sub);line-height:1.8">
+        MT5アプリは取引履歴をPDF（画像）でしか書き出せないため、このアプリで直接は取り込めません。<br><br>
+        代わりに、<strong style="color:var(--text)">MT5の取引履歴PDF（またはスクリーンショット）をClaudeとのチャットに送ってください。</strong>中身を読み取り、ここで使える専用CSVファイルに変換してお渡しします。そのCSVをこの画面でアップロードすれば、通常のMT4取込と同じように記録されます（時差変換は不要な形式で生成されます）。
+      </div>
     </div>
     <div id="import-preview" style="display:none"></div>
   </div>
@@ -1171,15 +1178,80 @@ function deleteTrade() {
 }
 
 // ===== MT4 CSV =====
+// Claudeとのチャットで生成する専用CSVの先頭マーカー（純粋なASCIIなので、文字コードを問わず同じ見え方になる）
+const SIMPLE_CSV_MARKER = 'CLAUDE_FX_IMPORT_V1';
+
 function handleCSV(input) {
   const file = input.files[0]; if(!file) return;
-  const reader = new FileReader();
   const isHTML = file.name.match(/\.htm(l)?$/i);
-  reader.onload = e => {
-    if(isHTML) parseHTML(e.target.result);
-    else parseCSV(e.target.result);
+  if(isHTML) {
+    const reader = new FileReader();
+    reader.onload = e => parseHTML(e.target.result);
+    reader.readAsText(file, 'Shift-JIS');
+    return;
+  }
+  // まずShift-JISとして読み、先頭行が専用マーカーかどうかを確認する（マーカー行は純ASCIIなので文字コードに依存せず判定できる）
+  const probeReader = new FileReader();
+  probeReader.onload = e => {
+    const firstLine = (e.target.result||'').split(/\r?\n/)[0].trim();
+    if(firstLine === SIMPLE_CSV_MARKER) {
+      // Claude生成の専用フォーマット（UTF-8）と判明 → 正しい文字コードで読み直す
+      const utf8Reader = new FileReader();
+      utf8Reader.onload = e2 => parseSimpleCSV(e2.target.result);
+      utf8Reader.readAsText(file, 'UTF-8');
+    } else {
+      // 通常のMT4生データとして処理
+      parseCSV(e.target.result);
+    }
   };
-  reader.readAsText(file, 'Shift-JIS');
+  probeReader.readAsText(file, 'Shift-JIS');
+}
+
+// Claudeがチャットで生成した専用CSVを解析する。
+// 形式: 1行目=マーカー、2行目=ヘッダー、3行目以降=データ（日付,時刻,通貨ペア,方向,ロット,エントリー価格,決済価格,SL,TP,損益円,チケット）
+// 時刻はこの時点で既にJST（日本時間）である前提のため、MT4のようなサーバー時刻からの時差変換は一切行わない。
+function parseSimpleCSV(text) {
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
+  importBuffer = [];
+  // 1行目(マーカー)と2行目(ヘッダー)をスキップし、3行目以降をデータとして扱う
+  for(let i=2; i<lines.length; i++) {
+    const cols = lines[i].split(',').map(c=>c.trim());
+    if(cols.length<10) continue;
+    const [date, entryTime, pair, direction, lot, entryPrice, exitPrice, sl, tp, amountStr, ticket] = cols;
+    if(!date || !pair || !direction) continue;
+    const isBuy = direction.toUpperCase()==='BUY';
+    const openP = parseFloat(entryPrice)||0;
+    const closeP = parseFloat(exitPrice)||0;
+    const lotNum = parseFloat(lot)||0;
+    const amountNum = parseFloat(amountStr)||0;
+    let pipsNum = 0;
+    if(openP>0 && closeP>0) {
+      const diff = isBuy ? closeP-openP : openP-closeP;
+      const pipSize = pair.includes('ゴールド')||pair.includes('XAU') ? 0.1 : pair.includes('JPY') ? 0.01 : 0.0001;
+      pipsNum = parseFloat((diff/pipSize).toFixed(1));
+    }
+    importBuffer.push({
+      id:Date.now()+Math.random(), date, entryTime: entryTime||'', pair,
+      direction: isBuy?'BUY':'SELL',
+      pipsNum, amountNum,
+      entryPrice: entryPrice||'', exitPrice: exitPrice||'',
+      sl: sl||'', tp: tp||'',
+      lot: lot||'', lotNum,
+      ticket: ticket || `MT5-${date}-${entryTime}-${pair}-${direction}`,
+      session: detectSession(entryTime||''), emotion:'ニュートラル',
+      envAnalysis:'', entryReason:'', concerns:'', psych:'',
+      notes:'', pips:String(pipsNum), amount:String(amountNum), fromMT4:true
+    });
+  }
+  const msg=document.getElementById('import-msg');
+  msg.style.display='block';
+  if(!importBuffer.length){
+    msg.style.cssText='display:block;padding:9px 12px;border-radius:7px;background:#F8514922;border:1px solid #F8514944;font-size:13px;color:var(--red)';
+    msg.textContent='⚠️ データを読み込めませんでした。Claudeが生成したCSV形式を確認してください。';
+    document.getElementById('import-preview').style.display='none';
+    return;
+  }
+  showImportPreview();
 }
 
 function parseHTML(html) {
