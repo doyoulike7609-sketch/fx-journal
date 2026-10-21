@@ -151,11 +151,10 @@
 
 <!-- Tabs -->
 <div id="tabs">
-  <button class="tab-btn active" onclick="switchTab(0)">📝 記録</button>
-  <button class="tab-btn" onclick="switchTab(1)">📊 統計</button>
-  <button class="tab-btn" onclick="switchTab(2)">⚠️ 弱点分析</button>
-  <button class="tab-btn" onclick="switchTab(3)">📋 履歴</button>
-  <button class="tab-btn" onclick="switchTab(4)">📥 MT4取込</button>
+  <button class="tab-btn active" data-tab="0" onclick="switchTab(0)">📝 記録</button>
+  <button class="tab-btn" data-tab="1" onclick="switchTab(1)">📊 統計</button>
+  <button class="tab-btn" data-tab="3" onclick="switchTab(3)">📋 履歴</button>
+  <button class="tab-btn" data-tab="4" onclick="switchTab(4)">📥 MT4取込</button>
 </div>
 
 <div id="content">
@@ -313,10 +312,6 @@
     <div id="stats-content"><div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📊</div>トレードを記録すると統計が表示されます</div></div>
   </div>
 
-  <!-- 弱点分析タブ -->
-  <div class="tab-panel" id="panel-2">
-    <div id="weakness-content"><div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">⚠️</div>トレードを記録すると弱点分析が表示されます</div></div>
-  </div>
 
   <!-- 履歴タブ -->
   <div class="tab-panel" id="panel-3">
@@ -335,8 +330,24 @@
         <input type="date" id="history-period-to" onchange="renderHistory()" style="max-width:160px">
       </div>
     </div>
+    <div style="display:flex;justify-content:flex-end;margin:0 0 10px">
+      <button id="history-select-toggle" class="period-btn" onclick="toggleHistorySelectMode()">🗑 まとめて削除</button>
+    </div>
     <div id="history-content"><div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📋</div>まだトレードが記録されていません</div></div>
     <div id="history-pagination" style="display:none;justify-content:center;align-items:center;gap:12px;margin-top:14px"></div>
+    <!-- まとめて削除モード用の操作バー（画面下に固定） -->
+    <div id="history-select-bar" style="display:none;position:sticky;bottom:0;z-index:50;margin-top:14px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--card,#161B22);border:1px solid var(--border2);border-radius:10px;box-shadow:0 -4px 16px #0008">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="period-btn" onclick="selectHistoryPage()">このページを全選択</button>
+        <button class="period-btn" id="history-select-all-btn" onclick="selectHistoryAll()">表示中の全件を選択</button>
+        <button class="period-btn" onclick="clearHistorySelection()">選択解除</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-red" id="history-delete-btn" style="flex:1;justify-content:center" onclick="deleteSelectedTrades()">🗑 削除する（0件）</button>
+        <button class="btn" id="history-cancel-btn" style="display:none;background:#21262D;color:var(--text);border:1px solid var(--border2)" onclick="cancelHistoryDelete()">やめる</button>
+        <button class="btn" style="background:#21262D;color:var(--text);border:1px solid var(--border2)" onclick="toggleHistorySelectMode()">終了</button>
+      </div>
+    </div>
   </div>
 
   <!-- MT4/MT5取込タブ -->
@@ -569,6 +580,7 @@ let ssPreview = null;
 let syncTimer = null;
 let tvWidget = null;
 let statsPeriod = 'all';
+let statsBreakdownTab = 'dir';
 let historyPeriod = 'all';
 let historyPage = 1;
 const HISTORY_PAGE_SIZE = 10;
@@ -659,7 +671,6 @@ function updateAll() {
   updateTradeCount();
   renderHistory();
   renderStats();
-  renderWeakness();
 }
 
 function updateTradeCount() {
@@ -670,8 +681,8 @@ function updateTradeCount() {
 
 // ===== TABS =====
 function switchTab(i) {
-  document.querySelectorAll('.tab-btn').forEach((b,j)=>b.classList.toggle('active',i===j));
-  document.querySelectorAll('.tab-panel').forEach((p,j)=>p.classList.toggle('active',i===j));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',Number(b.dataset.tab)===i));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+i));
 }
 
 // ===== FORM =====
@@ -1087,11 +1098,64 @@ function goToHistoryPage(page) {
   document.getElementById('panel-3').scrollIntoView({behavior:'smooth', block:'start'});
 }
 
+// ===== HISTORY：まとめて削除モード =====
+let historySelectMode = false;
+let historySelectedIds = new Set();
+let historyPageIds = [];      // 今表示しているページのトレードID
+let historyFilteredIds = [];  // 今の期間フィルターに入っている全トレードID
+let historyDeleteConfirming = false; // 「本当に削除しますか？」の確認待ち状態
+
+function toggleHistorySelectMode() {
+  historySelectMode = !historySelectMode;
+  historyDeleteConfirming = false;
+  historySelectedIds.clear();
+  renderHistory();
+}
+function toggleHistorySelect(id) {
+  id = String(id);
+  historyDeleteConfirming = false;
+  if(historySelectedIds.has(id)) historySelectedIds.delete(id); else historySelectedIds.add(id);
+  renderHistory();
+}
+function selectHistoryPage() { historyDeleteConfirming = false; historyPageIds.forEach(id => historySelectedIds.add(id)); renderHistory(); }
+function selectHistoryAll() { historyDeleteConfirming = false; historyFilteredIds.forEach(id => historySelectedIds.add(id)); renderHistory(); }
+function clearHistorySelection() { historyDeleteConfirming = false; historySelectedIds.clear(); renderHistory(); }
+function deleteSelectedTrades() {
+  const n = historySelectedIds.size;
+  if(!n) return;
+  // 1回目のタップでは確認表示に切り替えるだけ。もう一度押すと実際に削除する（ブラウザの確認ダイアログは使わない）
+  if(!historyDeleteConfirming) { historyDeleteConfirming = true; updateHistorySelectBar(); return; }
+  historyDeleteConfirming = false;
+  trades = trades.filter(t => !historySelectedIds.has(String(t.id)));
+  historySelectedIds.clear();
+  historySelectMode = false;
+  saveTrades(); // 削除は他の端末にも自動で反映される
+}
+function cancelHistoryDelete() { historyDeleteConfirming = false; updateHistorySelectBar(); }
+function updateHistorySelectBar() {
+  const bar = document.getElementById('history-select-bar');
+  const tg = document.getElementById('history-select-toggle');
+  if(!bar || !tg) return;
+  bar.style.display = historySelectMode ? 'block' : 'none';
+  tg.textContent = historySelectMode ? '✕ 削除モードを終了' : '🗑 まとめて削除';
+  tg.classList.toggle('active', historySelectMode);
+  const n = historySelectedIds.size;
+  const del = document.getElementById('history-delete-btn');
+  del.textContent = historyDeleteConfirming ? `⚠️ もう一度押すと${n}件を削除（元に戻せません）` : `🗑 削除する（${n}件）`;
+  del.disabled = n === 0; del.style.opacity = n === 0 ? '.45' : '1';
+  del.style.background = historyDeleteConfirming ? '#B62324' : '';
+  document.getElementById('history-cancel-btn').style.display = historyDeleteConfirming ? '' : 'none';
+  document.getElementById('history-select-all-btn').textContent = `表示中の全${historyFilteredIds.length}件を選択`;
+}
+
 // ===== HISTORY =====
 function renderHistory() {
   const el = document.getElementById('history-content');
   const pagEl = document.getElementById('history-pagination');
   const filtered = getFilteredTradesForHistory();
+  historyFilteredIds = filtered.map(t => String(t.id));
+  historyPageIds = [];
+  updateHistorySelectBar();
 
   if(!trades.length){
     el.innerHTML='<div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📋</div>まだトレードが記録されていません</div>';
@@ -1118,15 +1182,22 @@ function renderHistory() {
   if(historyPage < 1) historyPage = 1;
   const startIdx = (historyPage-1) * HISTORY_PAGE_SIZE;
   const pageTrades = sorted.slice(startIdx, startIdx + HISTORY_PAGE_SIZE);
+  historyPageIds = pageTrades.map(t => String(t.id));
 
   el.innerHTML = pageTrades.map(t=>{
     const isPos=(t.pipsNum||t.amountNum)>=0;
     const barColor=isPos?'var(--green)':'var(--red)';
     const ssUrl = t.ssDriveUrl || t.ssPreview;
-    return `<div class="trade-item">
-      <div class="pips-bar" style="background:${barColor}" onclick="openDetailModal('${t.id}')"></div>
-      ${ssUrl?`<img src="${ssUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:pointer" onclick="openDetailModal('${t.id}')" onerror="this.style.display='none'">`:''}
-      <div style="flex:1;min-width:0" onclick="openDetailModal('${t.id}')">
+    // 削除モード中は、行のどこをタップしても選択／解除になる（詳細は開かない）
+    const checked = historySelectedIds.has(String(t.id));
+    const itemAttrs = historySelectMode ? `onclick="toggleHistorySelect('${t.id}')" style="cursor:pointer;${checked?'border-color:var(--red);background:#F8514914;':''}"` : '';
+    const inner = historySelectMode ? '' : `onclick="openDetailModal('${t.id}')"`;
+    const checkbox = historySelectMode ? `<div style="width:24px;height:24px;border-radius:6px;border:2px solid ${checked?'var(--red)':'var(--border2)'};background:${checked?'var(--red)':'transparent'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0">${checked?'✓':''}</div>` : '';
+    return `<div class="trade-item" ${itemAttrs}>
+      ${checkbox}
+      <div class="pips-bar" style="background:${barColor}" ${inner}></div>
+      ${ssUrl?`<img src="${ssUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:pointer" ${inner} onerror="this.style.display='none'">`:''}
+      <div style="flex:1;min-width:0" ${inner}>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <span style="font-weight:700;font-size:13px">${t.pair}</span>
           <span class="tag" style="background:${t.direction==='BUY'?'#3FB95022':'#F8514922'};color:${t.direction==='BUY'?'var(--green)':'var(--red)'};border:1px solid ${t.direction==='BUY'?'#3FB95044':'#F8514944'}">${t.direction}</span>
@@ -1146,7 +1217,7 @@ function renderHistory() {
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
         ${t.pipsNum?`<div style="font-family:var(--mono);font-weight:700;font-size:14px;color:${t.pipsNum>=0?'var(--green)':'var(--red)'}">${t.pipsNum>=0?'+':''}${t.pipsNum}<span style="font-size:10px">p</span></div>`:''}
         ${t.amountNum?`<div style="font-family:var(--mono);font-size:12px;color:${t.amountNum>=0?'var(--green)':'var(--red)'}">${t.amountNum>=0?'+':''}${t.amountNum.toLocaleString()}円</div>`:''}
-        <button class="btn" style="background:#21262D;color:var(--sub);font-size:11px;padding:4px 10px;border:1px solid var(--border2)" onclick="openEditModal('${t.id}')">✏️ 編集</button>
+        ${historySelectMode?'':`<button class="btn" style="background:#21262D;color:var(--sub);font-size:11px;padding:4px 10px;border:1px solid var(--border2)" onclick="openEditModal('${t.id}')">✏️ 編集</button>`}
       </div>
     </div>`;
   }).join('');
@@ -1562,9 +1633,10 @@ function renderTradeDetail(t) {
 }
 
 // ===== 統計タブ：期間フィルター =====
+function setStatsBreakdown(tab) { statsBreakdownTab = tab; renderStats(); }
 function setStatsPeriod(period) {
   statsPeriod = period;
-  document.querySelectorAll('.period-btn').forEach(b=>b.classList.toggle('active', b.dataset.period===period));
+  document.querySelectorAll('#panel-1 .period-btn[data-period]').forEach(b=>b.classList.toggle('active', b.dataset.period===period));
   const customEl = document.getElementById('custom-period-inputs');
   customEl.style.display = period==='custom' ? 'flex' : 'none';
   if(period==='custom') {
@@ -1627,7 +1699,14 @@ function renderStats() {
   // RRRは円ベースで統一計算（pipsとyenを混在させると意味をなさないため）
   const avgWinAmt=wins.length?(totalWinAmt/wins.length):0;
   const avgLossAmt=losses.length?(Math.abs(totalLossAmt)/losses.length):0;
-  const rrr=avgLossAmt>0?(avgWinAmt/avgLossAmt).toFixed(2):'—';
+  const rrrAmt=avgLossAmt>0?(avgWinAmt/avgLossAmt).toFixed(2):'—';
+  // pipsベースのRRR：ロットの大小に左右されないので、こちらを主に表示する（pipsが1件もなければ円ベースで代用）
+  const pipsWins=wins.filter(t=>t.pipsNum), pipsLosses=losses.filter(t=>t.pipsNum);
+  const avgWinPipsN=pipsWins.length?pipsWins.reduce((s,t)=>s+t.pipsNum,0)/pipsWins.length:0;
+  const avgLossPipsN=pipsLosses.length?Math.abs(pipsLosses.reduce((s,t)=>s+t.pipsNum,0))/pipsLosses.length:0;
+  const rrrPips=avgLossPipsN>0&&avgWinPipsN>0?(avgWinPipsN/avgLossPipsN).toFixed(2):'—';
+  const usePipsRRR=rrrPips!=='—';
+  const rrr=usePipsRRR?rrrPips:rrrAmt;
   // Equity curve & drawdown（円ベースで統一。pipsはペアによって価値が違うため、累計には不適切）
   const sorted=[...trades].sort((a,b)=>new Date(a.date)-new Date(b.date));
   let cum=0,peak=0,trough=0,maxDD=0;
@@ -1638,16 +1717,17 @@ function renderStats() {
   trades.forEach(t=>{
     const pipsV = t.pipsNum||0;
     const amtV = t.amountNum||0;
-    const wd = WEEKDAY_NAMES[new Date(t.date).getDay()];
+    const wd = WEEKDAY_NAMES[new Date(t.date+'T00:00:00').getDay()];
     [[t.pair,byPair],[t.session,bySess],[wd,byWeekday]].forEach(([k,obj])=>{
-      if(!obj[k]) obj[k]={totalPips:0,totalAmt:0,count:0};
+      if(!obj[k]) obj[k]={totalPips:0,totalAmt:0,count:0,wins:0};
       obj[k].totalPips+=pipsV; obj[k].totalAmt+=amtV; obj[k].count++;
+      if(resultOf(t)>0) obj[k].wins++;
     });
     const lot=parseFloat(t.lot||t.lotNum||0);
     if(lot>0){
       const key=lot<=0.05?'~0.05':lot<=0.10?'0.06~0.10':lot<=0.20?'0.11~0.20':lot<=0.50?'0.21~0.50':'0.51~';
-      if(!byLot[key]) byLot[key]={count:0,wins:0};
-      byLot[key].count++;if((t.pipsNum||t.amountNum)>0)byLot[key].wins++;
+      if(!byLot[key]) byLot[key]={count:0,wins:0,totalAmt:0};
+      byLot[key].count++; byLot[key].totalAmt+=amtV; if(resultOf(t)>0)byLot[key].wins++;
     }
   });
   // 表示用の値は「pipsがあればpips、なければamountを円で」表示する（混在させない）
@@ -1694,304 +1774,139 @@ function renderStats() {
         <span style="font-size:10px;color:var(--sub);width:30px;flex-shrink:0">${d.count}件</span></div>`;
     }).join('');
   };
-  // Lot chart
-  const lotChart=Object.keys(byLot).length?`<div class="card"><div class="card-title">🎯 ロット別 勝率</div>
-    ${Object.entries(byLot).sort((a,b)=>a[0].localeCompare(b[0])).map(([lot,d])=>{
-      const wr=(d.wins/d.count*100).toFixed(0);
-      return `<div style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:12px;color:var(--yellow);font-weight:600;font-family:var(--mono)">${lot} lot</span>
-          <span style="font-size:11px;color:var(--sub)">${d.count}件 ｜ 勝率 <span style="color:${parseInt(wr)>=50?'var(--green)':'var(--red)'};font-weight:700">${wr}%</span></span>
+  // ===== 勝率バー（時間帯別・曜日別・方向別で共通） =====
+  const wrColor = wr => wr>=55?'var(--green)':wr>=40?'var(--yellow)':'var(--red)';
+  const winRateBars=(data,order,labelW)=>{
+    const keys=(order||Object.keys(data)).filter(k=>data[k]&&data[k].count);
+    if(!keys.length) return '<div style="color:var(--sub);text-align:center;padding:10px;font-size:12px">データがありません</div>';
+    return keys.map(k=>{
+      const d=data[k], wr=Math.round(d.wins/d.count*100), col=wrColor(wr);
+      const amt=(d.totalAmt>=0?'+':'')+Math.round(d.totalAmt).toLocaleString()+'円';
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;gap:8px">
+          <span style="font-size:13px;font-weight:600;color:var(--sub2);min-width:${labelW}">${k.split('(')[0]}</span>
+          <span style="font-size:11px;color:var(--sub);text-align:right">${d.wins}勝${d.count-d.wins}敗／${d.count}件 ｜ 勝率 <span style="color:${col};font-weight:700">${wr}%</span> ｜ <span style="color:${d.totalAmt>=0?'var(--green)':'var(--red)'};font-family:var(--mono)">${amt}</span></span>
         </div>
-        <div style="height:8px;background:#21262D;border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:${wr}%;background:${parseInt(wr)>=50?'var(--green)':'var(--red)'};border-radius:4px"></div>
-        </div>
+        <div style="height:8px;background:#21262D;border-radius:4px;overflow:hidden"><div style="height:100%;width:${wr}%;background:${col};border-radius:4px"></div></div>
       </div>`;
-    }).join('')}
-  </div>`:'';
-  const statCard=(label,val,color)=>`<div class="stat-card" style="border:1px solid ${color}33"><div class="stat-val" style="color:${color}">${val}</div><div class="stat-lbl">${label}</div></div>`;
+    }).join('');
+  };
+  const SESSION_ORDER=['東京時間(0-9JST)','ロンドン時間(16-25JST)','NY時間(22-7JST)','重複時間'];
+  const sessOrder=[...SESSION_ORDER,...Object.keys(bySess).filter(k=>!SESSION_ORDER.includes(k))];
+
+  // ===== 方向別（BUY/SELL）の勝率 =====
+  const dirTotals={BUY:{count:0,wins:0,totalAmt:0},SELL:{count:0,wins:0,totalAmt:0}};
+  const pairDir={}; // {ペア: {BUY:{..}, SELL:{..}}}
+  trades.forEach(t=>{
+    const d=dirTotals[t.direction]; if(!d) return;
+    const win=resultOf(t)>0;
+    d.count++; if(win) d.wins++; d.totalAmt+=(t.amountNum||0);
+    if(!pairDir[t.pair]) pairDir[t.pair]={BUY:{count:0,wins:0,totalAmt:0},SELL:{count:0,wins:0,totalAmt:0}};
+    const pd=pairDir[t.pair][t.direction]; pd.count++; if(win) pd.wins++; pd.totalAmt+=(t.amountNum||0);
+  });
+  const dirTag=k=>`<span class="tag" style="background:${k==='BUY'?'#3FB95022':'#F8514922'};color:${k==='BUY'?'var(--green)':'var(--red)'};border:1px solid ${k==='BUY'?'#3FB95044':'#F8514944'}">${k}</span>`;
+  const dirBoxes=['BUY','SELL'].map(k=>{
+    const d=dirTotals[k];
+    if(!d.count) return `<div style="background:#0D1117;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">${dirTag(k)}<div style="font-size:12px;color:var(--sub);margin-top:10px">まだデータなし</div></div>`;
+    const wr=Math.round(d.wins/d.count*100);
+    return `<div style="background:#0D1117;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">${dirTag(k)}
+      <div style="font-family:var(--mono);font-size:26px;font-weight:700;color:${wrColor(wr)};margin-top:8px">${wr}%</div>
+      <div style="font-size:10px;color:var(--sub);margin-top:2px">勝率（${d.wins}勝${d.count-d.wins}敗／${d.count}件）</div>
+      <div style="font-family:var(--mono);font-size:12px;margin-top:6px;color:${d.totalAmt>=0?'var(--green)':'var(--red)'}">${d.totalAmt>=0?'+':''}${Math.round(d.totalAmt).toLocaleString()}円</div></div>`;
+  }).join('');
+  let dirNote='';
+  if(dirTotals.BUY.count>=2 && dirTotals.SELL.count>=2){
+    const bw=dirTotals.BUY.wins/dirTotals.BUY.count*100, sw=dirTotals.SELL.wins/dirTotals.SELL.count*100;
+    if(Math.abs(bw-sw)>=15) dirNote=`<div style="margin-top:10px;font-size:12px;color:var(--yellow)">⚡ ${bw<sw?'BUY':'SELL'}のほうが勝率が${Math.abs(bw-sw).toFixed(0)}ポイント低くなっています。</div>`;
+  }
+  const pairDirHTML=Object.entries(pairDir).sort((a,b)=>(b[1].BUY.count+b[1].SELL.count)-(a[1].BUY.count+a[1].SELL.count)).map(([pair,dd])=>{
+    const rows=['BUY','SELL'].filter(k=>dd[k].count).map(k=>{
+      const d=dd[k], wr=Math.round(d.wins/d.count*100), col=wrColor(wr);
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="width:46px;flex-shrink:0;text-align:center">${dirTag(k)}</span>
+        <div style="flex:1;height:8px;background:#21262D;border-radius:4px;overflow:hidden"><div style="height:100%;width:${wr}%;background:${col};border-radius:4px"></div></div>
+        <span style="font-size:11px;color:${col};font-weight:700;width:36px;text-align:right;flex-shrink:0">${wr}%</span>
+        <span style="font-size:10px;color:var(--sub);width:92px;text-align:right;flex-shrink:0">${d.count}件・${(d.totalAmt>=0?'+':'')+Math.round(d.totalAmt).toLocaleString()}円</span></div>`;
+    }).join('');
+    let warn='';
+    if(dd.BUY.count>=2&&dd.SELL.count>=2){
+      const bw=dd.BUY.wins/dd.BUY.count*100, sw=dd.SELL.wins/dd.SELL.count*100;
+      if(Math.abs(bw-sw)>=25) warn=`<div style="margin-top:6px;font-size:11px;color:var(--yellow)">⚡ ${bw<sw?'BUY':'SELL'}側が弱い傾向（勝率${Math.min(bw,sw).toFixed(0)}%）</div>`;
+    }
+    const pt=byPair[pair]||{count:0,totalAmt:0};
+    return `<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><span style="font-size:13px;font-weight:600;color:var(--sub2)">${pair}</span><span style="font-size:11px;color:var(--sub)">全${pt.count}件 ｜ <span style="color:${pt.totalAmt>=0?'var(--green)':'var(--red)'};font-family:var(--mono)">${(pt.totalAmt>=0?'+':'')+Math.round(pt.totalAmt).toLocaleString()}円</span></span></div>${rows}${warn}</div>`;
+  }).join('');
+
+  // ===== 連勝・連敗（日付＋エントリー時刻の古い順で数える） =====
+  const chrono=[...trades].sort((a,b)=>new Date(`${a.date}T${a.entryTime||'00:00'}`)-new Date(`${b.date}T${b.entryTime||'00:00'}`));
+  let maxLose=0,maxWin=0,cL=0,cW=0;
+  chrono.forEach(t=>{if(resultOf(t)>0){cW++;cL=0;}else{cL++;cW=0;}maxWin=Math.max(maxWin,cW);maxLose=Math.max(maxLose,cL);});
   const miniCard=(label,val,color)=>`<div style="background:#0D1117;border:1px solid ${color}33;border-radius:8px;padding:10px;text-align:center">
     <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${color}">${val}</div>
     <div style="font-size:10px;color:var(--sub);margin-top:3px">${label}</div></div>`;
+  const statCard=(label,val,color)=>`<div class="stat-card" style="border:1px solid ${color}33"><div class="stat-val" style="color:${color};font-size:19px">${val}</div><div class="stat-lbl">${label}</div></div>`;
+  const yen=v=>(v>=0?'+':'')+Math.round(v).toLocaleString()+'円';
+  const yenCol=v=>v>=0?'var(--green)':'var(--red)';
+
+  // ===== その日の何回目のトレードか別の勝率 =====
+  const byNth={}, dayCount={};
+  chrono.forEach(t=>{
+    const n=(dayCount[t.date]=(dayCount[t.date]||0)+1);
+    const k=n>=4?'4回目以降':`${n}回目`;
+    if(!byNth[k]) byNth[k]={totalPips:0,totalAmt:0,count:0,wins:0};
+    byNth[k].count++; byNth[k].totalAmt+=(t.amountNum||0); byNth[k].totalPips+=(t.pipsNum||0);
+    if(resultOf(t)>0) byNth[k].wins++;
+  });
+
+  // ===== 1回あたりの期待値・利益の偏り =====
+  const evPerTrade=totalAmount/trades.length;
+  const bestTrade=trades.reduce((m,t)=>(t.amountNum||0)>(m.amountNum||0)?t:m,trades[0]);
+  const worstTrade=trades.reduce((m,t)=>(t.amountNum||0)<(m.amountNum||0)?t:m,trades[0]);
+  const exBest=totalAmount-(bestTrade.amountNum||0);
+
+  // ===== 勝率の内訳（タブで切り替え） =====
+  const LOT_ORDER=['~0.05','0.06~0.10','0.11~0.20','0.21~0.50','0.51~'];
+  const BD_TABS=[
+    ['dir','方向',()=>`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${dirBoxes}</div>${dirNote}`],
+    ['pair','通貨ペア',()=>pairDirHTML||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'],
+    ['sess','時間帯',()=>winRateBars(bySess,sessOrder,'80px')],
+    ['wd','曜日',()=>winRateBars(byWeekday,['月','火','水','木','金','土','日'],'28px')],
+    ['nth','何回目',()=>winRateBars(byNth,['1回目','2回目','3回目','4回目以降'],'70px')+'<div style="font-size:11px;color:var(--sub);line-height:1.6">同じ日のトレードを、エントリー時刻の順に数えています。回数が増えるほど勝率が下がっていれば、1日の回数を決める目安になります。</div>'],
+    ['lot','ロット',()=>winRateBars(Object.fromEntries(Object.entries(byLot).map(([k,v])=>[k+' lot',v])),LOT_ORDER.map(k=>k+' lot'),'90px')],
+  ];
+  if(!BD_TABS.some(t=>t[0]===statsBreakdownTab)) statsBreakdownTab='dir';
+  const breakdownCard=`<div class="card"><div class="card-title">🎯 勝率の内訳</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+      ${BD_TABS.map(([k,l])=>`<button class="period-btn${k===statsBreakdownTab?' active':''}" onclick="setStatsBreakdown('${k}')">${l}</button>`).join('')}
+    </div>
+    ${BD_TABS.find(t=>t[0]===statsBreakdownTab)[2]()}
+  </div>`;
+
   el.innerHTML=`
     <div class="stat-grid">
+      ${statCard('総損益',yen(totalAmount),yenCol(totalAmount))}
       ${statCard('勝率',`${winRate}%`,parseFloat(winRate)>=50?'var(--green)':'var(--red)')}
+      ${statCard('期待値／回',yen(evPerTrade),yenCol(evPerTrade))}
       ${statCard('PF（円）',pfAmt,parseFloat(pfAmt)>=1?'var(--green)':pfAmt==='—'?'var(--sub)':'var(--red)')}
-      ${statCard('RRR（円）',rrr,parseFloat(rrr)>=1?'var(--green)':'var(--yellow)')}
-      ${statCard('総トレード数',trades.length,'var(--blue2)')}
-      ${statCard('勝ち',wins.length,'var(--green)')}
-      ${statCard('負け',losses.length,'var(--red)')}
+      ${statCard(usePipsRRR?'RRR（pips）':'RRR（円）',rrr,parseFloat(rrr)>=1?'var(--green)':'var(--yellow)')}
+      ${statCard('トレード数',`${trades.length}件（${wins.length}勝${losses.length}敗）`,'var(--blue2)')}
     </div>
-    <div class="card"><div class="card-title">📍 pips サマリー</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
+    ${equitySVG}
+    ${breakdownCard}
+    <div class="card"><div class="card-title">📋 詳細</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">
+        ${miniCard(`最大利益（${bestTrade.date}）`,yen(bestTrade.amountNum||0),'var(--green)')}
+        ${miniCard(`最大損失（${worstTrade.date}）`,yen(worstTrade.amountNum||0),'var(--red)')}
+        ${miniCard('最大利益を除く合計',yen(exBest),yenCol(exBest))}
+        ${miniCard('最大ドローダウン','-'+maxDD.toLocaleString()+'円','var(--red)')}
+        ${miniCard('最大連勝',maxWin+'連勝','var(--green)')}
+        ${miniCard('最大連敗',maxLose+'連敗','var(--red)')}
         ${miniCard('合計pips',(totalPips>=0?'+':'')+totalPips.toFixed(1),totalPips>=0?'var(--green)':'var(--red)')}
-        ${miniCard('合計+pips','+'+totalWinPips.toFixed(1),'var(--green)')}
-        ${miniCard('合計−pips',totalLossPips.toFixed(1),'var(--red)')}
         ${miniCard('平均+pips','+'+avgWinPips,'var(--green)')}
         ${miniCard('平均−pips',avgLossPips,'var(--red)')}
       </div>
-    </div>
-    <div class="card"><div class="card-title">💴 損益サマリー（円）</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
-        ${miniCard('総損益',(totalAmount>=0?'+':'')+totalAmount.toLocaleString()+'円',totalAmount>=0?'var(--green)':'var(--red)')}
-        ${miniCard('合計利益','+'+totalWinAmt.toLocaleString()+'円','var(--green)')}
-        ${miniCard('合計損失',totalLossAmt.toLocaleString()+'円','var(--red)')}
-        ${miniCard('PF（円）',pfAmt,parseFloat(pfAmt)>=1?'var(--green)':pfAmt==='—'?'var(--sub)':'var(--red)')}
-      </div>
-    </div>
-    ${equitySVG}
-    <div class="card"><div class="card-title">📉 ドローダウン・到達点（円）</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
-        ${miniCard('最高到達','+'+peak.toLocaleString()+'円','var(--green)')}
-        ${miniCard('最低到達',trough.toLocaleString()+'円','var(--red)')}
-        ${miniCard('最大DD','-'+maxDD.toLocaleString()+'円','var(--red)')}
-      </div>
-    </div>
-    ${lotChart}
-    <div class="card"><div class="card-title">通貨ペア別 損益（円）</div><div class="bar-chart">${barChart(byPair,maxPair,'90px')}</div></div>
-    <div class="card"><div class="card-title">時間帯別 損益（円）</div><div class="bar-chart">${barChart(bySess,maxSess,'110px')}</div></div>
-    <div class="card"><div class="card-title">曜日別 損益（円）</div><div class="bar-chart">${barChart(byWeekday,maxWeekday,'40px',['月','火','水','木','金','土','日'])}</div></div>
-  `;
-}
-
-// ===== WEAKNESS =====
-function renderWeakness() {
-  const el=document.getElementById('weakness-content');
-  if(!trades.length){el.innerHTML='<div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">⚠️</div>トレードを記録すると弱点分析が表示されます</div>';return;}
-  const losses=trades.filter(t=>(t.pipsNum||t.amountNum)<0);
-
-  // ===== 時系列順（古い→新しい）に並べたトレード列。日付＋エントリー時刻で正確にソート =====
-  const chronological = [...trades].sort((a,b)=>{
-    const da = new Date(`${a.date}T${a.entryTime||'00:00'}`);
-    const db = new Date(`${b.date}T${b.entryTime||'00:00'}`);
-    return da-db;
-  });
-  const resultOf = t => (t.pipsNum||t.amountNum)>0;
-
-  // Loss causes
-  const causes={};
-  const ADVICE={'感情エラー':'エントリー前に30秒待つルールを設けましょう。','早すぎる損切り':'SLを設定したら手動決済は原則禁止にしましょう。','リスクリワード不良':'エントリー前にRRR1:1.5以上を確認しましょう。','根拠の言語化不足':'「なぜ入るか」を言葉で説明できないトレードはスキップしましょう。','環境認識が不明確':'エントリー前に必ず上位足を確認しましょう。','重複時間帯リスク':'重複時間帯はロットを減らすか様子見を検討してください。','相場環境ミス':'上位足のトレンド確認を習慣化しましょう。'};
-  const CC={'感情エラー':'var(--red)','早すぎる損切り':'var(--yellow)','リスクリワード不良':'#FF7B72','重複時間帯リスク':'var(--blue2)','根拠の言語化不足':'var(--purple)','環境認識が不明確':'#FFA657','相場環境ミス':'var(--sub)'};
-  losses.forEach(t=>{
-    const cs=[];
-    if(['FOMO（乗り遅れ恐怖）','報復トレード衝動','過信'].includes(t.emotion))cs.push('感情エラー');
-    const e=parseFloat(t.entryPrice),ex=parseFloat(t.exitPrice),s=parseFloat(t.sl),tp=parseFloat(t.tp);
-    if(e&&s&&tp&&!isNaN(e)&&!isNaN(s)&&!isNaN(tp)&&Math.abs(e-s)>Math.abs(e-tp))cs.push('リスクリワード不良');
-    if(e&&ex&&s&&!isNaN(e)&&!isNaN(ex)&&!isNaN(s)&&Math.abs(e-ex)<Math.abs(e-s)*0.5)cs.push('早すぎる損切り');
-    if(t.session==='重複時間')cs.push('重複時間帯リスク');
-    if(!t.entryReason||t.entryReason.length<10)cs.push('根拠の言語化不足');
-    if(!t.envAnalysis||t.envAnalysis.length<5)cs.push('環境認識が不明確');
-    if(!cs.length)cs.push('相場環境ミス');
-    cs.forEach(c=>{if(!causes[c])causes[c]={count:0};causes[c].count++;});
-  });
-  // 時間帯別の勝率・損益（単独分析）
-  const SESSIONS=['東京時間(0-9JST)','ロンドン時間(16-25JST)','NY時間(22-7JST)','重複時間'];
-  const sessionStats={};
-  SESSIONS.forEach(s=>{
-    const m=trades.filter(t=>t.session===s);
-    if(m.length){
-      const w=m.filter(t=>(t.pipsNum||t.amountNum)>0).length;
-      const totalAmt=m.reduce((sum,t)=>sum+(t.amountNum||0),0);
-      sessionStats[s]={count:m.length,wins:w,wr:(w/m.length*100).toFixed(0),totalAmt};
-    }
-  });
-  // Streaks
-  let maxLose=0,maxWin=0,cL=0,cW=0;
-  [...trades].reverse().forEach(t=>{const w=(t.pipsNum||t.amountNum)>0;if(w){cW++;cL=0;}else{cL++;cW=0;}maxWin=Math.max(maxWin,cW);maxLose=Math.max(maxLose,cL);});
-
-  // ===== ①通貨ペア×方向の勝率・損益（特にゴールドBUY/SELLの差を見たいという要望） =====
-  const pairDirStats={};
-  trades.forEach(t=>{
-    const key=`${t.pair}_${t.direction}`;
-    if(!pairDirStats[key]) pairDirStats[key]={pair:t.pair,direction:t.direction,count:0,wins:0,totalAmt:0};
-    pairDirStats[key].count++;
-    if(resultOf(t)) pairDirStats[key].wins++;
-    pairDirStats[key].totalAmt+=(t.amountNum||0);
-  });
-  // 同じペアでBUY/SELLの両方が2件以上ある場合のみ「差」として意味があるので、そういうペアを優先表示
-  const pairGroups={};
-  Object.values(pairDirStats).forEach(d=>{
-    if(!pairGroups[d.pair]) pairGroups[d.pair]=[];
-    pairGroups[d.pair].push(d);
-  });
-
-  // ===== ②連敗後の挙動パターン（2連敗以上の直後のトレードを抽出して通常時と比較） =====
-  const afterStreak=[], normalTrades=[];
-  let curLoseStreak=0;
-  chronological.forEach(t=>{
-    if(curLoseStreak>=2) afterStreak.push(t); else normalTrades.push(t);
-    if(resultOf(t)) curLoseStreak=0; else curLoseStreak++;
-  });
-  const streakStats = (arr)=>{
-    if(!arr.length) return null;
-    const w=arr.filter(resultOf).length;
-    const avgLot=arr.reduce((s,t)=>s+(t.lotNum||parseFloat(t.lot)||0),0)/arr.length;
-    const totalAmt=arr.reduce((s,t)=>s+(t.amountNum||0),0);
-    const emoCount={};
-    arr.forEach(t=>{const e=t.emotion||'ニュートラル';emoCount[e]=(emoCount[e]||0)+1;});
-    const topEmo=Object.entries(emoCount).sort((a,b)=>b[1]-a[1])[0];
-    return {count:arr.length,wr:(w/arr.length*100).toFixed(0),avgLot:avgLot.toFixed(2),totalAmt,topEmo};
-  };
-  const afterStreakStats=streakStats(afterStreak);
-  const normalStats=streakStats(normalTrades);
-
-  // ===== ③感情の連鎖分析（ある感情の次のトレードはどんな感情・結果になりやすいか） =====
-  const emotionChain={}; // {感情A: {次の感情B: 件数, ...}}
-  const emotionNextResult={}; // {感情A: {win, lose}} 次のトレードの勝敗
-  for(let i=0;i<chronological.length-1;i++){
-    const cur=chronological[i].emotion||'ニュートラル';
-    const next=chronological[i+1];
-    const nextEmo=next.emotion||'ニュートラル';
-    if(!emotionChain[cur]) emotionChain[cur]={};
-    emotionChain[cur][nextEmo]=(emotionChain[cur][nextEmo]||0)+1;
-    if(!emotionNextResult[cur]) emotionNextResult[cur]={win:0,lose:0};
-    if(resultOf(next)) emotionNextResult[cur].win++; else emotionNextResult[cur].lose++;
-  }
-  // 注目すべき連鎖：「次に感情が崩れやすい」「次に負けやすい」もの上位3つ
-  const RISKY_EMOTIONS=['FOMO（乗り遅れ恐怖）','過信','恐怖・躊躇','報復トレード衝動'];
-  const chainInsights=[];
-  Object.entries(emotionChain).forEach(([from,toMap])=>{
-    const total=Object.values(toMap).reduce((a,b)=>a+b,0);
-    if(total<2) return; // サンプル少なすぎる組み合わせは除外
-    const riskyCount=Object.entries(toMap).filter(([e])=>RISKY_EMOTIONS.includes(e)).reduce((s,[,c])=>s+c,0);
-    const riskyRate=riskyCount/total;
-    const nr=emotionNextResult[from];
-    const nextLoseRate = nr && (nr.win+nr.lose)>0 ? nr.lose/(nr.win+nr.lose) : 0;
-    if(riskyRate>=0.4 || nextLoseRate>=0.6){
-      chainInsights.push({from,total,riskyRate,nextLoseRate,nr});
-    }
-  });
-  chainInsights.sort((a,b)=>(b.riskyRate+b.nextLoseRate)-(a.riskyRate+a.nextLoseRate));
-
-  // 時間帯別バー表示用
-  const sessionRows=SESSIONS.map(sess=>{
-    const d=sessionStats[sess];
-    if(!d) return '';
-    const wr=parseInt(d.wr);
-    const col=wr>=60?'var(--green)':wr>=40?'var(--yellow)':'var(--red)';
-    const amtLabel=(d.totalAmt>=0?'+':'')+d.totalAmt.toLocaleString()+'円';
-    return `<div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-        <span style="font-size:13px;font-weight:600;color:var(--sub2)">${sess.split('(')[0]}</span>
-        <span style="font-size:11px;color:var(--sub)">${d.count}件 ｜ 勝率 <span style="color:${col};font-weight:700">${d.wr}%</span> ｜ <span style="color:${d.totalAmt>=0?'var(--green)':'var(--red)'};font-family:var(--mono)">${amtLabel}</span></span>
-      </div>
-      <div style="height:8px;background:#21262D;border-radius:4px;overflow:hidden">
-        <div style="height:100%;width:${wr}%;background:${col};border-radius:4px"></div>
-      </div>
-    </div>`;
-  }).join('');
-
-  // ===== ①の表示HTML：ペアごとにBUY/SELLを並べる =====
-  const pairDirHTML = Object.entries(pairGroups).sort((a,b)=>{
-    const totalA=a[1].reduce((s,d)=>s+d.count,0), totalB=b[1].reduce((s,d)=>s+d.count,0);
-    return totalB-totalA;
-  }).map(([pair,dirs])=>{
-    const sortedDirs=dirs.sort((a,b)=>a.direction==='BUY'?-1:1);
-    const rows=sortedDirs.map(d=>{
-      const wr=(d.wins/d.count*100).toFixed(0);
-      const col=wr>=55?'var(--green)':wr>=40?'var(--yellow)':'var(--red)';
-      const dirCol=d.direction==='BUY'?'var(--green)':'var(--red)';
-      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span class="tag" style="background:${d.direction==='BUY'?'#3FB95022':'#F8514922'};color:${dirCol};border:1px solid ${d.direction==='BUY'?'#3FB95044':'#F8514944'};width:42px;text-align:center;flex-shrink:0">${d.direction}</span>
-        <div style="flex:1;height:8px;background:#21262D;border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:${wr}%;background:${col};border-radius:4px"></div>
-        </div>
-        <span style="font-size:11px;color:${col};font-weight:700;width:36px;text-align:right;flex-shrink:0">${wr}%</span>
-        <span style="font-size:10px;color:var(--sub);width:60px;text-align:right;flex-shrink:0">${d.count}件・${(d.totalAmt>=0?'+':'')+d.totalAmt.toLocaleString()}円</span>
-      </div>`;
-    }).join('');
-    // BUY/SELL両方あって差が大きい場合は警告を出す
-    let warning='';
-    if(sortedDirs.length===2){
-      const [buyD,sellD]=sortedDirs;
-      const buyWr=buyD.count?buyD.wins/buyD.count*100:0, sellWr=sellD.count?sellD.wins/sellD.count*100:0;
-      if(Math.abs(buyWr-sellWr)>=25 && Math.min(buyD.count,sellD.count)>=2){
-        const weaker=buyWr<sellWr?'BUY':'SELL';
-        const weakerWr=Math.min(buyWr,sellWr).toFixed(0);
-        warning=`<div style="margin-top:6px;font-size:11px;color:var(--yellow)">⚡ ${weaker}側が弱い傾向（勝率${weakerWr}%）。${weaker}でのエントリー根拠を見直す価値がありそうです。</div>`;
-      }
-    }
-    return `<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #21262D11">
-      <div style="font-size:13px;font-weight:600;color:var(--sub2);margin-bottom:8px">${pair}</div>
-      ${rows}
-      ${warning}
-    </div>`;
-  }).join('');
-
-  // ===== ②の表示HTML：連敗後 vs 通常時の比較 =====
-  let streakCompareHTML='';
-  if(afterStreakStats && normalStats){
-    const wrDiff = parseFloat(afterStreakStats.wr) - parseFloat(normalStats.wr);
-    const lotDiff = parseFloat(afterStreakStats.avgLot) - parseFloat(normalStats.avgLot);
-    streakCompareHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <div style="background:#0D1117;border:1px solid var(--border);border-radius:8px;padding:12px">
-          <div style="font-size:11px;color:var(--sub);margin-bottom:6px">通常時</div>
-          <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:${parseFloat(normalStats.wr)>=50?'var(--green)':'var(--red)'}">${normalStats.wr}%</div>
-          <div style="font-size:10px;color:var(--sub);margin-top:2px">勝率（${normalStats.count}件）</div>
-          <div style="font-size:11px;color:var(--yellow);margin-top:6px">平均ロット ${normalStats.avgLot}</div>
-        </div>
-        <div style="background:#0D1117;border:1px solid ${wrDiff<0?'#F8514944':'var(--border)'};border-radius:8px;padding:12px">
-          <div style="font-size:11px;color:var(--sub);margin-bottom:6px">2連敗以上の直後</div>
-          <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:${parseFloat(afterStreakStats.wr)>=50?'var(--green)':'var(--red)'}">${afterStreakStats.wr}%</div>
-          <div style="font-size:10px;color:var(--sub);margin-top:2px">勝率（${afterStreakStats.count}件）</div>
-          <div style="font-size:11px;color:var(--yellow);margin-top:6px">平均ロット ${afterStreakStats.avgLot}${lotDiff>0.01?` <span style="color:var(--red)">(+${lotDiff.toFixed(2)})</span>`:''}</div>
-        </div>
-      </div>
-      ${(wrDiff<=-10 || lotDiff>0.02)?`<div style="background:#F8514911;border:1px solid #F8514933;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6">
-        <span style="color:var(--red);font-weight:600">🚨 傾向検出：</span>
-        <span style="color:var(--sub)">
-          ${wrDiff<=-10?`連敗後は勝率が${Math.abs(wrDiff).toFixed(0)}ポイント下がっています。`:''}
-          ${lotDiff>0.02?`連敗後はロットが平均${lotDiff.toFixed(2)}大きくなる傾向があります（取り返そうとする心理かもしれません）。`:''}
-          ${afterStreakStats.topEmo?` この状況で最も多い感情は「${afterStreakStats.topEmo[0]}」（${afterStreakStats.topEmo[1]}件）でした。`:''}
-        </span>
-      </div>`:`<div style="color:var(--sub);font-size:12px;text-align:center;padding:8px">連敗後も大きな崩れは見られません</div>`}
-    `;
-  } else {
-    streakCompareHTML = '<div style="color:var(--sub);font-size:12px;text-align:center;padding:10px">2連敗以上のデータがまだ少ないため分析できません</div>';
-  }
-
-  // ===== ③の表示HTML：感情の連鎖 =====
-  let chainHTML='';
-  if(chainInsights.length===0){
-    chainHTML = '<div style="color:var(--sub);font-size:12px;text-align:center;padding:10px">明確な感情の連鎖パターンはまだ見つかっていません（データが増えると検出されやすくなります）</div>';
-  } else {
-    chainHTML = chainInsights.slice(0,3).map(ci=>{
-      const total=ci.total;
-      const topNext=Object.entries(emotionChain[ci.from]).sort((a,b)=>b[1]-a[1])[0];
-      const lossRatePct=(ci.nextLoseRate*100).toFixed(0);
-      return `<div style="background:#0D1117;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-          <span class="tag" style="background:#8B949E22;color:var(--sub2);border:1px solid #8B949E44">${ci.from}</span>
-          <span style="color:var(--sub);font-size:12px">→ 次は</span>
-          <span class="tag" style="background:${RISKY_EMOTIONS.includes(topNext[0])?'#F8514922':'#3FB95022'};color:${RISKY_EMOTIONS.includes(topNext[0])?'var(--red)':'var(--green)'};border:1px solid ${RISKY_EMOTIONS.includes(topNext[0])?'#F8514944':'#3FB95044'}">${topNext[0]}</span>
-          <span style="color:var(--sub);font-size:11px">になりやすい（${topNext[1]}/${total}回）</span>
-        </div>
-        <div style="font-size:11px;color:var(--sub)">この感情の次のトレードの負け率：<span style="color:${ci.nextLoseRate>=0.5?'var(--red)':'var(--sub2)'};font-weight:700">${lossRatePct}%</span></div>
-      </div>`;
-    }).join('');
-  }
-
-  el.innerHTML=`
-    <div class="card"><div class="card-title">📊 通貨ペア × 方向（BUY/SELL）の傾向</div>${pairDirHTML||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'}</div>
-    <div class="card"><div class="card-title">🔁 連敗後の挙動パターン</div>${streakCompareHTML}</div>
-    <div class="card"><div class="card-title">🔗 感情の連鎖パターン</div>${chainHTML}</div>
-    <div class="card"><div class="card-title">🕐 時間帯別 勝率・損益</div>
-      ${sessionRows||'<div style="color:var(--sub);text-align:center;padding:10px">データがありません</div>'}
-    </div>
-    <div class="card"><div class="card-title">🔥 ストリーク分析</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div style="background:#F8514911;border:1px solid #F8514933;border-radius:8px;padding:12px;text-align:center">
-          <div style="font-family:var(--mono);font-size:28px;font-weight:700;color:var(--red)">${maxLose}</div>
-          <div style="font-size:11px;color:var(--sub);margin-top:3px">最大連敗数</div>
-          ${maxLose>=3?'<div style="font-size:11px;color:var(--red);margin-top:5px">⚠️ 3連敗で強制休憩を</div>':''}
-        </div>
-        <div style="background:#3FB95011;border:1px solid #3FB95033;border-radius:8px;padding:12px;text-align:center">
-          <div style="font-family:var(--mono);font-size:28px;font-weight:700;color:var(--green)">${maxWin}</div>
-          <div style="font-size:11px;color:var(--sub);margin-top:3px">最大連勝数</div>
-          ${maxWin>=3?'<div style="font-size:11px;color:var(--green);margin-top:5px">✅ 連勝中こそ慎重に</div>':''}
-        </div>
-      </div>
+      ${(totalAmount>0&&exBest<=0)?`<div style="margin-top:10px;font-size:12px;color:var(--yellow)">⚡ 最大の1回を除くと損益がマイナスです。成績が1回の大勝ちに支えられています。</div>`:''}
+      <div style="margin-top:10px;font-size:11px;color:var(--sub);line-height:1.6">期待値／回 ＝ 総損益 ÷ トレード数。RRR ＝ 勝ち平均pips ÷ 負け平均pips（ロットの影響を受けません）。</div>
     </div>
   `;
 }
