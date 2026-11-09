@@ -1355,7 +1355,7 @@ function parseSimpleCSV(text) {
     let pipsNum = 0;
     if(openP>0 && closeP>0) {
       const diff = isBuy ? closeP-openP : openP-closeP;
-      const pipSize = pair.includes('ゴールド')||pair.includes('XAU') ? 0.1 : pair.includes('JPY') ? 0.01 : 0.0001;
+      const pipSize = pair.includes('BTC') ? 1 : pair.includes('ゴールド')||pair.includes('XAU') ? 0.1 : pair.includes('JPY') ? 0.01 : 0.0001;
       pipsNum = parseFloat((diff/pipSize).toFixed(1));
     }
     importBuffer.push({
@@ -1443,7 +1443,7 @@ function parseHTML(html) {
     let pipsNum = 0;
     if(openPrice>0&&closePrice>0) {
       const diff = isBuy ? closePrice-openPrice : openPrice-closePrice;
-      const pipSize = mappedPair.includes('ゴールド')||mappedPair.includes('XAU') ? 0.1
+      const pipSize = mappedPair.includes('BTC') ? 1 : mappedPair.includes('ゴールド')||mappedPair.includes('XAU') ? 0.1
                     : mappedPair.includes('JPY') ? 0.01 : 0.0001;
       pipsNum = parseFloat((diff/pipSize).toFixed(1));
     }
@@ -1497,7 +1497,7 @@ function parseCSV(text) {
     let pipsNumC = 0;
     if(openP>0&&closeP>0){
       const diffC = isBuyC ? closeP-openP : openP-closeP;
-      const pipSizeC = mappedPairC.includes('ゴールド')||mappedPairC.includes('XAU') ? 0.1
+      const pipSizeC = mappedPairC.includes('BTC') ? 1 : mappedPairC.includes('ゴールド')||mappedPairC.includes('XAU') ? 0.1
                      : mappedPairC.includes('JPY') ? 0.01 : 0.0001;
       pipsNumC = parseFloat((diffC/pipSizeC).toFixed(1));
     }
