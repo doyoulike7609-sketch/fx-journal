@@ -303,6 +303,10 @@
         <button class="period-btn" data-period="ytd" onclick="setStatsPeriod('ytd')">今年</button>
         <button class="period-btn" data-period="custom" onclick="setStatsPeriod('custom')">期間指定</button>
       </div>
+      <div id="pair-filter-row" style="display:none;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <span style="font-size:12px;color:var(--sub)">通貨ペア</span>
+        <span id="pair-filter-btns" style="display:contents"></span>
+      </div>
       <div id="custom-period-inputs" style="display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="date" id="period-from" onchange="renderStats()" style="max-width:160px">
         <span style="color:var(--sub);font-size:12px">〜</span>
@@ -580,6 +584,7 @@ let ssPreview = null;
 let syncTimer = null;
 let tvWidget = null;
 let statsPeriod = 'all';
+let statsPair = 'all';
 let statsBreakdownTab = 'dir';
 let historyPeriod = 'all';
 let historyPage = 1;
@@ -1650,8 +1655,35 @@ function setStatsPeriod(period) {
   renderStats();
 }
 
+// 通貨ペアの表示名（ゴールド・ビットコインは日本語に統一。それ以外は記録されている名前のまま）
+function pairKeyOf(t) {
+  const p = String(t.pair||'').trim();
+  if(!p) return '';
+  if(p.includes('XAU')||p.includes('ゴールド')) return 'ゴールド';
+  if(p.includes('BTC')) return 'ビットコイン';
+  return p;
+}
+// 記録されている通貨ペアから、切り替えボタンを自動で作る（2種類以上あるときだけ表示）
+function renderPairButtons() {
+  const keys = [];
+  trades.forEach(t=>{ const k=pairKeyOf(t); if(k && !keys.includes(k)) keys.push(k); });
+  if(statsPair!=='all' && !keys.includes(statsPair)) statsPair = 'all';
+  const row = document.getElementById('pair-filter-row');
+  if(!row) return;
+  if(keys.length<2) { row.style.display='none'; statsPair='all'; return; }
+  const esc = x => String(x).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const btn = (k,label) => `<button class="period-btn${statsPair===k?' active':''}" data-pair="${esc(k)}" onclick="setStatsPair(this.dataset.pair)">${esc(label)}</button>`;
+  document.getElementById('pair-filter-btns').innerHTML = btn('all','すべて') + keys.map(k=>btn(k,k)).join('');
+  row.style.display='flex';
+}
+function setStatsPair(pair) {
+  statsPair = pair;
+  renderStats();
+}
+
 function getFilteredTradesForStats() {
-  if(statsPeriod==='all') return trades;
+  const base = statsPair==='all' ? trades : trades.filter(t=>pairKeyOf(t)===statsPair);
+  if(statsPeriod==='all') return base;
   const now = new Date();
   let fromDate = null, toDate = null;
   if(statsPeriod==='today') {
@@ -1667,7 +1699,7 @@ function getFilteredTradesForStats() {
     if(f) fromDate=new Date(f);
     if(t) { toDate=new Date(t); toDate.setHours(23,59,59,999); }
   }
-  return trades.filter(t=>{
+  return base.filter(t=>{
     const d = new Date(t.date);
     if(fromDate && d<fromDate) return false;
     if(toDate && d>toDate) return false;
@@ -1677,6 +1709,7 @@ function getFilteredTradesForStats() {
 
 // ===== STATS =====
 function renderStats() {
+  renderPairButtons();
   const el=document.getElementById('stats-content');
   const trades = getFilteredTradesForStats();
   if(!trades.length){el.innerHTML='<div class="card" style="text-align:center;padding:36px;color:var(--sub)"><div style="font-size:32px;margin-bottom:8px">📊</div>この期間のトレードがありません</div>';return;}
